@@ -3,8 +3,15 @@
 
 Compares FSE against other codecs (rANS, tANS, Huffman, zlib, zstd, pickle)
 on compression ratio and speed.
+
+Usage:
+    # With conda environment activated:
+    python scl/benchmark/benchmark_fse.py [dataset_name] [--codecs fse,zlib] [--dataset-fast] [--synthetic-large]
+
+    Run with --help for detailed usage information.
 """
 
+import argparse
 import inspect
 import math
 import os
@@ -14,16 +21,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+
 import pandas as pd
 
-# Add project root to Python path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+project_root = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Imports after sys.path manipulation (required for script execution)
 from scl.compressors.fse import FSEParams, FSEEncoder, FSEDecoder  # noqa: E402
 from scl.compressors.huffman_coder import HuffmanDecoder, HuffmanEncoder  # noqa: E402
+from scl.compressors.lz77 import LZ77Decoder, LZ77Encoder  # noqa: E402
 from scl.compressors.rANS import rANSParams, rANSDecoder, rANSEncoder  # noqa: E402
 from scl.compressors.tANS import tANSParams, tANSDecoder, tANSEncoder  # noqa: E402
 from scl.core.data_block import DataBlock  # noqa: E402
@@ -38,7 +47,7 @@ from scl.external_compressors.zstd_external import (  # noqa: E402
     ZstdExternalEncoder,
 )
 from scl.utils.test_utils import are_blocks_equal, get_random_data_block  # noqa: E402
-from benchmark.dataset_utils import (  # noqa: E402
+from scl.benchmark.dataset_utils import (  # noqa: E402
     get_frequencies_from_datablock,
     load_dataset_files,
     read_file_as_bytes,
@@ -137,32 +146,23 @@ def create_pickle_codec():
 
 
 def create_zstd_codec():
-    """Create zstandard codec (byte-level LZ77-based, for reference only)."""
+    """Create zstandard codec using existing ZstdExternalEncoder/Decoder.
 
-    class ZstdEncoderWrapper:
-        def __init__(self, encoder):
-            self.encoder = encoder
-
-        def encode_block(self, data_block: DataBlock):
-            if all(isinstance(s, int) and 0 <= s < 256 for s in data_block.data_list):
-                data_bytes = bytes(data_block.data_list)
-            elif all(isinstance(s, str) and len(s) == 1 for s in data_block.data_list):
-                data_bytes = bytes(ord(s) for s in data_block.data_list)
-            else:
-                data_bytes = str(data_block.data_list).encode("utf-8")
-            byte_block = DataBlock(list(data_bytes))
-            return self.encoder.encode_block(byte_block)
-
-    class ZstdDecoderWrapper:
-        def __init__(self, decoder):
-            self.decoder = decoder
-
-        def decode_block(self, encoded):
-            return self.decoder.decode_block(encoded)
-
+    Note: Returns BitArray (with 32-bit size header), not raw bytes.
+    This matches the existing library implementation.
+    """
     encoder = ZstdExternalEncoder(level=6)
     decoder = ZstdExternalDecoder(level=6)
-    return ZstdEncoderWrapper(encoder), ZstdDecoderWrapper(decoder)
+    return encoder, decoder
+
+
+def create_lz77_codec():
+    """Create LZ77 encoder/decoder pair.
+
+    LZ77 is a universal compressor that works on byte streams.
+    It doesn't require frequency information.
+    """
+    return LZ77Encoder(), LZ77Decoder()
 
 
 def get_codec_factories(codecs: Optional[List[str]] = None):
@@ -170,7 +170,7 @@ def get_codec_factories(codecs: Optional[List[str]] = None):
 
     Args:
         codecs: List of codec names to include. If None, uses default set.
-                Valid names: 'fse', 'rans', 'tans', 'huffman', 'zlib', 'zstd', 'pickle'
+                Valid names: 'fse', 'rans', 'tans', 'huffman', 'lz77', 'zlib', 'zstd', 'pickle'
                 Default: ['fse', 'zlib', 'zstd', 'pickle']
 
     Returns:
@@ -187,6 +187,7 @@ def get_codec_factories(codecs: Optional[List[str]] = None):
         "rans": (lambda f: create_rans_codec(f), "rANS", None),
         "tans": (lambda f: create_tans_codec(f), "tANS", None),
         "huffman": (lambda f: create_huffman_codec(f), "Huffman", None),
+        "lz77": (lambda: create_lz77_codec(), "LZ77", lambda db: db.size),
         "zlib": (lambda: create_zlib_codec(), "zlib", lambda db: db.size),
         "zstd": (lambda: create_zstd_codec(), "zstd", lambda db: db.size),
         "pickle": (lambda: create_pickle_codec(), "pickle", None),
@@ -226,9 +227,9 @@ def benchmark_codec(
     Returns:
         CodecResult with benchmark metrics
     """
-    # Convert string symbols to bytes for byte-level codecs (zlib, zstd)
+    # Convert string symbols to bytes for byte-level codecs (lz77, zlib, zstd)
     # Byte-level codecs expect bytes (0-255), but synthetic data uses strings
-    byte_level_codecs = {"zlib", "zstd"}
+    byte_level_codecs = {"lz77", "zlib", "zstd"}
     if name.lower() in byte_level_codecs:
         if all(isinstance(s, str) and len(s) == 1 for s in data_block.data_list):
             data_block = DataBlock([ord(s) for s in data_block.data_list])
@@ -254,8 +255,7 @@ def benchmark_codec(
     original_bits = data_size_bytes * 8
 
     # Compression ratio = original_size / compressed_size (higher = better)
-    # 2.0 means 2x smaller (compressed is half the size)
-    # 0.5 means 2x larger (compressed is twice the size)
+
     compression_ratio = original_bits / compressed_bits if compressed_bits > 0 else 0
 
     # Bits per symbol: compressed_bits / number_of_symbols
@@ -303,6 +303,8 @@ def benchmark_codecs(
                 encoder, decoder = factory()
             result = benchmark_codec(encoder, decoder, data_block, name, get_size_func)
             results.append(result)
+            encoder.reset()
+            decoder.reset()
         except Exception as e:
             print(f"ERROR: {name} failed: {e}")
             continue
@@ -474,8 +476,7 @@ def save_results(results_dict: Dict, dataset_name: str, project_root: str):
         dataset_name: Name of dataset
         project_root: Root directory of project
     """
-    # Results are saved in benchmark/benchmark_results/ relative to project root
-    results_dir = os.path.join(project_root, "benchmark", "benchmark_results")
+    results_dir = os.path.join(project_root, "scl", "benchmark", "benchmark_results")
     os.makedirs(results_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -565,7 +566,7 @@ def run_benchmark_suite(
     print("=" * 120)
 
     all_results = []
-    byte_level_codecs = {"zlib", "zstd"}
+    byte_level_codecs = {"lz77", "zlib", "zstd"}
 
     for freq in freqs_list:
         prob_dist = freq.get_prob_dist()
@@ -672,7 +673,7 @@ def run_benchmark_on_dataset(
         print(f"Processing all {len(files_to_process)} files")
 
     per_file_results = []
-    byte_level_codecs = {"zlib", "zstd"}
+    byte_level_codecs = {"lz77", "zlib", "zstd"}
 
     for file_path in files_to_process:
         print(f"\n{'='*120}")
@@ -685,7 +686,6 @@ def run_benchmark_on_dataset(
             continue
 
         freq = get_frequencies_from_datablock(data_block)
-        # Use empirical entropy from data_block itself (more accurate)
         empirical_entropy = data_block.get_entropy()
 
         print(f"  Size: {data_block.size} bytes")
@@ -765,52 +765,77 @@ def run_benchmark_on_dataset(
 
 def main():
     """Main entry point for FSE benchmarking."""
-    # Custom argument parsing with underscore prefix instead of dashes
-    dataset = None
+    parser = argparse.ArgumentParser(
+        description="Benchmark FSE against other codecs (rANS, tANS, Huffman, zlib, zstd, pickle)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run on synthetic data (default)
+  python scl/benchmark/benchmark_fse.py
+
+  # Run on dataset
+  python scl/benchmark/benchmark_fse.py calgary
+
+  # Run with specific codecs
+  python scl/benchmark/benchmark_fse.py --codecs fse,zlib,zstd
+
+  # Run large synthetic benchmark
+  python scl/benchmark/benchmark_fse.py --synthetic-large
+
+  # Run dataset in fast/test mode (smallest file only)
+  python scl/benchmark/benchmark_fse.py calgary --dataset-fast
+        """,
+    )
+    parser.add_argument(
+        "dataset",
+        nargs="?",
+        help="Dataset name to benchmark (if not provided, uses synthetic data)",
+    )
+    parser.add_argument(
+        "--codecs",
+        "-c",
+        type=str,
+        help="Comma-separated list of codecs to benchmark (default: fse,zlib,zstd,pickle). "
+        "Valid: fse,rans,tans,huffman,lz77,zlib,zstd,pickle",
+    )
+    parser.add_argument(
+        "--synthetic-large",
+        action="store_true",
+        help="Use large synthetic data (100K symbols) instead of default (10K)",
+    )
+    parser.add_argument(
+        "--dataset-fast",
+        "--fast",
+        action="store_true",
+        help="Process only smallest file in dataset (for quick validation)",
+    )
+
+    args = parser.parse_args()
+
+    project_root = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    )
+
     codecs = None
-    synthetic_large = False
-    dataset_fast = False
-
-    i = 1
-    while i < len(sys.argv):
-        arg = sys.argv[i]
-        if arg == "_codecs" and i + 1 < len(sys.argv):
-            codecs = [c.strip() for c in sys.argv[i + 1].split(",")]
-            i += 2
-        elif arg == "_synthetic_large":
-            synthetic_large = True
-            i += 1
-        elif arg == "_dataset_fast":
-            dataset_fast = True
-            i += 1
-        elif arg.startswith("_"):
-            print(f"WARNING: Unknown argument '{arg}', ignoring")
-            i += 1
-        elif not arg.startswith("-"):
-            # Positional argument (dataset name)
-            dataset = arg
-            i += 1
-        else:
-            i += 1
-
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if args.codecs:
+        codecs = [c.strip() for c in args.codecs.split(",")]
 
     if codecs:
         print(f"Codecs: {', '.join(codecs)}")
 
-    if dataset:
-        print(f"Dataset mode: {dataset}")
-        if dataset_fast:
+    if args.dataset:
+        print(f"Dataset mode: {args.dataset}")
+        if args.dataset_fast:
             print("VALIDATION mode: Processing smallest file only")
         run_benchmark_on_dataset(
-            dataset,
+            args.dataset,
             project_root,
-            test_mode=dataset_fast,
+            test_mode=args.dataset_fast,
             codecs=codecs,
         )
     else:
-        if synthetic_large:
-            print("SYNTHETIC DATA mode: LARGE benchmark (1M symbols)")
+        if args.synthetic_large:
+            print("SYNTHETIC DATA mode: LARGE benchmark (100K symbols)")
             data_size = 100_000
         else:
             print("SYNTHETIC DATA mode: Standard benchmark (10K symbols)")

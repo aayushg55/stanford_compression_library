@@ -50,8 +50,9 @@ def load_dataset_files(dataset_name: str, project_root: str) -> List[str]:
     Returns:
         List of file paths
     """
-    # Datasets are in benchmark/datasets/ relative to project root
-    dataset_path = os.path.join(project_root, "benchmark", "datasets", dataset_name)
+    dataset_path = os.path.join(
+        project_root, "scl", "benchmark", "datasets", dataset_name
+    )
 
     if not os.path.isdir(dataset_path):
         raise ValueError(

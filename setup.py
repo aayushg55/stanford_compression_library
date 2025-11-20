@@ -15,5 +15,6 @@ setup(
         "zstandard",
         "scipy",
         "typing_extensions",
+        "pandas",
     ],
 )
