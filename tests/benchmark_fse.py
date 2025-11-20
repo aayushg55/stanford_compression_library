@@ -5,9 +5,11 @@ Compares FSE against other codecs (rANS, tANS, Huffman, zlib, zstd, pickle)
 on compression ratio and speed.
 """
 
+import argparse
 import inspect
 import math
 import os
+import pickle
 import sys
 import time
 from dataclasses import dataclass
@@ -21,24 +23,23 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# Imports after sys.path manipulation (required for script execution)
-from scl.compressors.fse import FSEParams, FSEEncoder, FSEDecoder  # noqa: E402
-from scl.compressors.huffman_coder import HuffmanDecoder, HuffmanEncoder  # noqa: E402
-from scl.compressors.rANS import rANSParams, rANSDecoder, rANSEncoder  # noqa: E402
-from scl.compressors.tANS import tANSParams, tANSDecoder, tANSEncoder  # noqa: E402
-from scl.core.data_block import DataBlock  # noqa: E402
-from scl.external_compressors.zlib_external import (  # noqa: E402
+from scl.compressors.fse import FSEParams, FSEEncoder, FSEDecoder
+from scl.compressors.huffman_coder import HuffmanDecoder, HuffmanEncoder
+from scl.compressors.rANS import rANSParams, rANSDecoder, rANSEncoder
+from scl.compressors.tANS import tANSParams, tANSDecoder, tANSEncoder
+from scl.core.data_block import DataBlock
+from scl.external_compressors.zlib_external import (
     ZlibExternalDecoder,
     ZlibExternalEncoder,
 )
-from scl.core.prob_dist import Frequencies, get_avg_neg_log_prob  # noqa: E402
-from scl.external_compressors.pickle_external import PickleDecoder, PickleEncoder  # noqa: E402
-from scl.external_compressors.zstd_external import (  # noqa: E402
+from scl.core.prob_dist import Frequencies, get_avg_neg_log_prob
+from scl.external_compressors.pickle_external import PickleDecoder, PickleEncoder
+from scl.external_compressors.zstd_external import (
     ZstdExternalDecoder,
     ZstdExternalEncoder,
 )
-from scl.utils.test_utils import are_blocks_equal, get_random_data_block  # noqa: E402
-from benchmark.dataset_utils import (  # noqa: E402
+from scl.utils.test_utils import are_blocks_equal, get_random_data_block
+from tests.dataset_utils import (
     get_frequencies_from_datablock,
     load_dataset_files,
     read_file_as_bytes,
@@ -474,8 +475,7 @@ def save_results(results_dict: Dict, dataset_name: str, project_root: str):
         dataset_name: Name of dataset
         project_root: Root directory of project
     """
-    # Results are saved in benchmark/benchmark_results/ relative to project root
-    results_dir = os.path.join(project_root, "benchmark", "benchmark_results")
+    results_dir = os.path.join(project_root, "benchmark_results")
     os.makedirs(results_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -659,7 +659,7 @@ def run_benchmark_on_dataset(
         try:
             size = os.path.getsize(file_path)
             file_sizes.append((size, file_path))
-        except OSError:
+        except:
             continue
 
     file_sizes.sort(key=lambda x: x[0])
