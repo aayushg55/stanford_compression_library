@@ -19,11 +19,11 @@ This project aims to reimplement and analyze FSE in a pedagogical setting. First
 
 ## 2. Literature and Code Review
 
-Jarek Duda’s ANS framework provides entropy coders that match arithmetic coding’s compression efficiency while using simpler operations [1]. Instead of emitting variable-length codewords or maintaining an interval, ANS keeps a single integer state that jointly encodes the past bitstream and the next symbol to be decoded. Each symbol update applies a bijection between states and bit sequences, with symbol probabilities reflected in how many states each symbol occupies. Variants include range-based ANS (rANS) and table-based ANS (tANS). FSE is a highly optimized tANS realization [2].
+Jarek Duda's ANS framework provides entropy coders that match arithmetic coding's compression efficiency while using simpler operations [1]. Instead of emitting variable-length codewords or maintaining an interval, ANS keeps a single integer state that jointly encodes the past bitstream and the next symbol to be decoded. Each symbol update applies a bijection between states and bit sequences, with symbol probabilities reflected in how many states each symbol occupies. Variants include range-based ANS (rANS) and table-based ANS (tANS). FSE is a highly optimized tANS realization [2].
 
-Yann Collet’s blog series on Finite State Entropy explains how to turn tANS theory into a fast implementation [2]. The decoder maintains a state in `[0, 2^tableLog)`, and a decoding table indexed by state stores the symbol, the number of bits to read, and a base for the next state. Each decode step consists of a table lookup, a bit read, and an addition, giving a very small, predictable hot loop. Encoding runs in reverse order: starting from a final state, the encoder processes the message backwards, decides how many bits to flush, emits them, and transitions using a shared `stateTable` plus per-symbol transforms. Collet also discusses how to normalize symbol counts so they sum to `2^tableLog` and how to “spread” symbols over the state space using modular stepping to avoid clustering.
+Yann Collet's blog series on Finite State Entropy explains how to turn tANS theory into a fast implementation [2]. The decoder maintains a state in `[0, 2^tableLog)`, and a decoding table indexed by state stores the symbol, the number of bits to read, and a base for the next state. Each decode step consists of a table lookup, a bit read, and an addition, giving a very small, predictable hot loop. Encoding runs in reverse order: starting from a final state, the encoder processes the message backwards, decides how many bits to flush, emits them, and transitions using a shared `stateTable` plus per-symbol transforms. Collet also discusses how to normalize symbol counts so they sum to `2^tableLog` and how to "spread" symbols over the state space using modular stepping to avoid clustering.
 
-The FiniteStateEntropy GitHub repository is the canonical C implementation of FSE and a related Huffman coder (Huff0) [3]. It exposes public APIs (`FSE_compress`, `FSE_decompress`) and internal structures that closely match the blog descriptions: decoder entries storing `(symbol, nbBits, newState)`, encoder transforms that encode per-symbol subranges, and a compact shared `stateTable`. Benchmarks in the repository show FSE achieving near-Shannon compression and very high decode throughput on synthetic distributions.
+The FiniteStateEntropy GitHub repository is the C implementation of FSE by Yann Collet [3]. It exposes public APIs (`FSE_compress`, `FSE_decompress`) and internal structures that closely match the blog descriptions: decoder entries storing `(symbol, nbBits, newState)`, encoder transforms that encode per-symbol subranges, and a compact shared `stateTable`. Benchmarks in the repository show FSE achieving near-Shannon compression and very high decode throughput on synthetic distributions.
 
 Zstandard integrates FSE as its main entropy coder for literals and for length/offset codes, using block-level histograms, adaptive `tableLog` selection, and multi-threaded table build and compression [4]. Within SCL, existing pure-Python entropy coders (Huffman, rANS, tANS, arithmetic) and wrappers around zlib/zstd provide practical baselines and reference implementations for both behavior and performance [5].
 
@@ -70,7 +70,7 @@ Overall, the “basic goal” has been reached at the Python level: FSE matches 
 
 ### 4.2 Plan for Remaining Weeks
 
-In the next 1–2 weeks, I plan to clean up and slightly harden the Python implementation (edge cases, documentation, and tests) while designing the baseline C++ FSE implementation. The initial C++ version will prioritize correctness and API compatibility with the existing Python code, using simple data structures and clear control flow.
+In the final 1–2 weeks, I plan to clean up and slightly harden the Python implementation (edge cases, documentation, and tests) while designing the baseline C++ FSE implementation. The initial C++ version will prioritize correctness and API compatibility with the existing Python code, using simple data structures and clear control flow.
 
 After that, I will focus on performance work: packing tables for cache locality, using branchless transforms for the encoder, tuning `tableLog`, and inlining bit I/O. In parallel, I will improve the benchmarking setup to reduce Python overhead (for example by batching operations and minimizing Python/C crossings) and, if time permits, add a standalone C++ benchmark. Final experiments will include compression and throughput comparisons on synthetic distributions and on standard corpora, producing plots and tables that can be reused directly in the final report.
 
@@ -79,7 +79,23 @@ After that, I will focus on performance work: packing tables for cache locality,
 ## References
 
 [1] J. Duda, *Asymmetric numeral systems: entropy coding combining speed of Huffman coding with compression rate of arithmetic coding*, arXiv, 2013.  
-[2] Y. Collet, “Finite State Entropy – a new breed of entropy coder” and follow-up posts, fastcompression.blogspot.com.  
-[3] Y. Collet, **FiniteStateEntropy** library (FSE/Huff0), GitHub.  
-[4] Y. Collet et al., **Zstandard** compression format and source code.  
-[5] Stanford Compression Library (SCL) documentation and existing entropy coder implementations.
+    <https://arxiv.org/abs/1311.2540>
+
+[2] Y. Collet, “Finite State Entropy – a new breed of entropy coder” and follow-up posts, *Fast Compression Blog*.  
+    <https://fastcompression.blogspot.com>
+
+[3] Y. Collet, **FiniteStateEntropy** library (FSE), GitHub.  
+    <https://github.com/Cyan4973/FiniteStateEntropy>
+
+[4] Y. Collet et al., **Zstandard** compression format and source code, GitHub.  
+    <https://github.com/facebook/zstd>
+
+[5] Stanford Compression Library (SCL), documentation and entropy coder implementations, GitHub.  
+    <https://github.com/stanfordcompression/stanford_compression_library>
+
+<!-- Reference-style link definitions for clickable citations -->
+[1]: https://arxiv.org/abs/1311.2540
+[2]: https://fastcompression.blogspot.com
+[3]: https://github.com/Cyan4973/FiniteStateEntropy
+[4]: https://github.com/facebook/zstd
+[5]: https://github.com/stanfordcompression/stanford_compression_library
