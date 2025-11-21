@@ -2,18 +2,7 @@
 
 FSE is a variant of tANS (table ANS) used in zstandard compression.
 This implementation follows the baseline FSE algorithm as described in
-Yann Collet's documentation, using proper k/(k+1) bit distribution.
-
-## Key Features:
-- Normalization to power-of-2 table size
-- FSE-style symbol spreading with co-prime step
-- Real k/(k+1) bit distribution per state (not per symbol)
-- Proper encode/decode tables with delta transforms
-
-## References:
-1. zstandard compression format: https://github.com/facebook/zstd
-2. FSE algorithm: Yann Collet's blog posts on FSE
-3. RFC 8478: Zstandard Compression and the 'application/zstd' Media Type
+Yann Collet's blogs.
 """
 
 from dataclasses import dataclass
@@ -65,7 +54,7 @@ class FSEParams:
     DATA_BLOCK_SIZE_BITS: int = 32
 
     # Table size is 2^TABLE_SIZE_LOG2
-    # Default: 12 (4096 states) - matches zstandard FSE table size
+    # Default: 12 (4096 states)
     # trades off compression for memory usage
     TABLE_SIZE_LOG2: int = 12
 
@@ -235,35 +224,10 @@ def build_decode_table(
         next_state_enc = symbol_next[s]  # Encoder state in [table_size, 2*table_size)
         symbol_next[s] += 1
 
-        # Real FSE k/(k+1) logic: nb_bits depends on next_state_enc (encoder state)
         nb_bits = table_log - floor_log2(next_state_enc)
 
-        # For decode: new_state = new_state_base + bits, where bits in [0, 2^nb_bits)
-        # Decode states must be in [0, table_size)
-        # The encoder state next_state_enc is in [table_size, 2*table_size)
-        # The corresponding decode state is: next_state_dec = next_state_enc - table_size (in [0, table_size))
-
-        # Standard FSE formula for decode: new_state_base = (next_state_enc << nb_bits) - table_size
-        # But this produces values that may be negative or >= table_size
-        # We need to adjust to ensure new_state_base + bits is in [0, table_size)
-
-        # The decode state we want to reach is: next_state_dec = next_state_enc - table_size
-        # We read nb_bits from stream, so: new_state_base + bits = next_state_dec
-        # Therefore: new_state_base should be such that new_state_base + [0, 2^nb_bits) covers next_state_dec
-
-        # new_state_base should be: next_state_dec - (some value to account for bits read)
-        # where next_state_dec = next_state_enc - table_size (in [0, table_size))
-        # But we want to ensure the full range [new_state_base, new_state_base + 2^nb_bits) is in [0, table_size)
-        # The maximum bits we can read is 2^nb_bits - 1
         max_bits = (1 << nb_bits) - 1 if nb_bits > 0 else 0
 
-        # We want: new_state_base + max_bits < table_size
-        # And: new_state_base >= 0
-        # And we want to reach next_state_dec, so: new_state_base <= next_state_dec <= new_state_base + max_bits
-
-        # Compute new_state_base to ensure we can reach next_state_dec
-        # new_state_base should be as large as possible while ensuring the range fits
-        # Formula: new_state_base = (next_state_enc << nb_bits) - table_size, then adjust
         new_state_base = (next_state_enc << nb_bits) - table_size
 
         # Adjust to ensure it's in valid range for decode states
@@ -320,7 +284,6 @@ def build_encode_table(
     for s in symbols:
         freq = norm_freq[s]
         if freq == 0:
-            # Keep API compatibility
             delta_nb_bits = ((table_log + 1) << 16) - (1 << table_log)
             symbolTT[s] = SymTransform(delta_nb_bits, 0)
             continue
@@ -377,11 +340,9 @@ class FSEEncoder(DataEncoder):
         """
         tt = self.symbolTT[s]
 
-        # Real FSE: nb_bits_out depends on state via delta_nb_bits
-        # nb_bits_out = floor((state + delta_nb_bits) / 2^16)
         nb_out = (state + tt.delta_nb_bits) >> 16
 
-        # Write out lowest nb_out bits of state (LSB-first)
+        # Write out lowest nb_out bits of state
         out_mask = (1 << nb_out) - 1
         out_bits_value = state & out_mask
 
@@ -421,7 +382,6 @@ class FSEEncoder(DataEncoder):
 
         # Prepend final state
         # State is in [table_size, 2*table_size), so we encode (state - table_size) with table_log bits
-        # This matches FSE convention where we store the offset from table_size
         state_offset = state - self.table_size
         final_state_bits = uint_to_bitarray(state_offset, bit_width=self.table_log)
         bits = final_state_bits + bits
@@ -468,7 +428,7 @@ class FSEDecoder(DataDecoder):
         Returns:
             (symbol, new_state)
         """
-        # DTable is indexed by state in [0, table_size), no modulo needed
+        # DTable is indexed by state in [0, table_size)
         entry = self.DTable[state]
         s = entry.symbol
         nb = entry.nb_bits
@@ -537,11 +497,6 @@ class FSEDecoder(DataDecoder):
 
 
 def test_fse_basic():
-    """Basic test for FSE encoding/decoding
-
-    NOTE: Before running tests, activate conda environment:
-    conda activate ee274_env
-    """
     freq = Frequencies({"A": 3, "B": 3, "C": 2})
     data = DataBlock(["A", "C", "B"])
     # Use default TABLE_SIZE_LOG2=12 (4096 states) unless testing with smaller table
@@ -558,14 +513,6 @@ def test_fse_basic():
 
 
 def test_fse_coding():
-    """Test FSE coding on various distributions
-
-    NOTE: Before running tests, activate conda environment:
-    conda activate ee274_env
-
-    Uses default TABLE_SIZE_LOG2=12 (4096 states) for most tests,
-    with smaller tables for testing edge cases.
-    """
     freqs_list = [
         Frequencies({"A": 1, "B": 1, "C": 2}),
         Frequencies({"A": 3, "B": 3, "C": 2}),
@@ -573,13 +520,11 @@ def test_fse_coding():
         Frequencies({"A": 1, "B": 3}),
     ]
 
-    # Use default TABLE_SIZE_LOG2=12 for most tests (matches zstandard)
-    # Smaller tables used only for testing edge cases
     params_list = [
-        FSEParams(freqs_list[0], TABLE_SIZE_LOG2=12),  # Default: 4096 states
-        FSEParams(freqs_list[1], TABLE_SIZE_LOG2=12),  # Default: 4096 states
-        FSEParams(freqs_list[2], TABLE_SIZE_LOG2=12),  # Default: 4096 states
-        FSEParams(freqs_list[3], TABLE_SIZE_LOG2=12),  # Default: 4096 states
+        FSEParams(freqs_list[0], TABLE_SIZE_LOG2=12),
+        FSEParams(freqs_list[1], TABLE_SIZE_LOG2=12),
+        FSEParams(freqs_list[2], TABLE_SIZE_LOG2=12),
+        FSEParams(freqs_list[3], TABLE_SIZE_LOG2=12),
     ]
 
     DATA_SIZE = 1000
