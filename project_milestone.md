@@ -1,11 +1,9 @@
 # Project Milestone: Finite State Entropy (FSE)
 
-**Course:** EE274 – Data Compression  
 **Student:** Aayush Gupta  
 **Mentor:** Pulkit  
-**Repo:** https://github.com/aayushg55/stanford_compression_library
-
----
+**Code repo:** <https://github.com/aayushg55/stanford_compression_library>  
+**Milestone report:** <https://github.com/aayushg55/stanford_compression_library/blob/main/project_milestone.md>
 
 ## 1. Introduction
 
