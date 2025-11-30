@@ -198,12 +198,12 @@ def build_spread_table(norm_freq: Dict[Any, int], table_log: int) -> List[Any]:
 def build_decode_table(
     spread: List[Any], norm_freq: Dict[Any, int], table_log: int
 ) -> List[DecodeEntry]:
-    """Build FSE decode table with real k/(k+1) logic
+    """Build FSE decode table
 
     For each state, computes:
     - symbol: from spread table
-    - nb_bits: table_log - floor_log2(nextState) (this gives k/k+1 distribution)
-    - new_state_base: (nextState << nb_bits) - table_size
+    - nb_bits: number of bits to read, computed as table_log - floor_log2(next_state_enc)
+    - new_state_base: base value for new state, computed as (next_state_enc << nb_bits) - table_size
 
     Args:
         spread: Spread table (symbol per state)
@@ -216,7 +216,7 @@ def build_decode_table(
     table_size = 1 << table_log
     D = [None] * table_size
 
-    # symbol_next starts at normalized frequency (like FSE C code)
+    # Track next encoder state for each symbol, starting at normalized frequency
     symbol_next = {s: norm_freq[s] for s in norm_freq}
 
     for u in range(table_size):
@@ -225,19 +225,11 @@ def build_decode_table(
         symbol_next[s] += 1
 
         nb_bits = table_log - floor_log2(next_state_enc)
-
-        max_bits = (1 << nb_bits) - 1 if nb_bits > 0 else 0
-
         new_state_base = (next_state_enc << nb_bits) - table_size
 
-        # Adjust to ensure it's in valid range for decode states
-        # We need: 0 <= new_state_base and new_state_base + max_bits < table_size
-        if new_state_base < 0:
-            new_state_base = 0
-        if new_state_base + max_bits >= table_size:
-            new_state_base = table_size - max_bits - 1
-            if new_state_base < 0:
-                new_state_base = 0
+        assert (
+            0 <= new_state_base < table_size
+        ), f"New state base {new_state_base} not in [0, {table_size})"
 
         D[u] = DecodeEntry(symbol=s, nb_bits=nb_bits, new_state_base=new_state_base)
 
@@ -288,7 +280,7 @@ def build_encode_table(
             symbolTT[s] = SymTransform(delta_nb_bits, 0)
             continue
 
-        # FSE formulas (baseline, no low-prob special-casing)
+        # Compute symbol transform parameters
         max_bits_out = table_log - floor_log2(freq - 1)
         min_state_plus = freq << max_bits_out
         delta_nb_bits = (max_bits_out << 16) - min_state_plus
@@ -301,7 +293,11 @@ def build_encode_table(
 
 
 class FSEEncoder(DataEncoder):
-    """FSE Encoder using proper FSE algorithm with k/(k+1) bit distribution"""
+    """FSE Encoder
+
+    Encodes symbols using a table-based approach where the number of output bits
+    varies based on the current state and symbol frequency.
+    """
 
     def __init__(self, fse_params: FSEParams):
         """Initialize FSE encoder
@@ -369,7 +365,7 @@ class FSEEncoder(DataEncoder):
             block_size_bits = uint_to_bitarray(0, bit_width=self.DATA_BLOCK_SIZE_BITS)
             return block_size_bits
 
-        # Initialize state (FSE convention: start at table_size)
+        # Initialize state to table_size
         state = self.table_size
 
         # Encode from last symbol to first (reverse order)
@@ -396,7 +392,11 @@ class FSEEncoder(DataEncoder):
 
 
 class FSEDecoder(DataDecoder):
-    """FSE Decoder using proper FSE algorithm with k/(k+1) bit distribution"""
+    """FSE Decoder
+
+    Decodes symbols using a table-based approach, reading variable numbers of bits
+    based on the current state to determine the next symbol and state.
+    """
 
     def __init__(self, fse_params: FSEParams):
         """Initialize FSE decoder

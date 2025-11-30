@@ -1,6 +1,6 @@
 """Unit tests for individual symbol encoding/decoding operations.
 
-Assumptions (canonical FSE-style):
+These tests verify state transitions and bit output:
 
 - Encode state lives in [TABLE_SIZE, 2*TABLE_SIZE).
 - Decode state lives in [0, TABLE_SIZE).
@@ -88,7 +88,7 @@ def test_encode_symbol_multiple_steps(
 
 @pytest.mark.parametrize("freq_dict,table_log,description", TEST_FREQUENCIES)
 def test_encode_symbol_state_dependent_bits(freq_dict, table_log, description):
-    """For each symbol, nb_out should have at most 2 distinct values that are consecutive (k/(k+1) property)."""
+    """For each symbol, nb_out should have at most 2 distinct consecutive values."""
     freq = Frequencies(freq_dict)
     params = FSEParams(freq, TABLE_SIZE_LOG2=table_log)
     encoder = FSEEncoder(params)
@@ -114,7 +114,7 @@ def test_encode_symbol_state_dependent_bits(freq_dict, table_log, description):
             len(unique_nb_outs) <= 2
         ), f"{description}, symbol {symbol}: Expected at most 2 distinct nb_out values, got {unique_nb_outs}"
 
-        # Check: if there are 2 values, they should be consecutive (k and k+1 property)
+        # Check: if there are 2 values, they should be consecutive
         if len(unique_nb_outs) == 2:
             assert (
                 abs(unique_nb_outs[1] - unique_nb_outs[0]) == 1

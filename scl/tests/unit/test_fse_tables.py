@@ -1,12 +1,10 @@
 """Unit tests for FSE table building (decode and encode tables).
 
-These tests assume a canonical FSE-style implementation:
+These tests verify the structure and properties of FSE tables:
 
 - Decode state is an index into DTable: 0 <= state < table_size.
 - Decode step: state' = new_state_base + bits, bits in [0, 2^nb_bits).
 - Encode state (tableU16 values) lives in [table_size, 2*table_size).
-
-No modulo tricks on decode: DTable[state] expects state in [0, table_size).
 """
 
 import pytest
@@ -87,8 +85,6 @@ def test_decode_table_nb_bits_range(freq_dict, table_log, description):
     assert all(
         0 <= nb <= table_log for nb in nb_bits_values
     ), f"{description}: Invalid nb_bits values {set(nb_bits_values)}"
-    # We don't enforce k/(k+1) variation here; that is a compression-efficiency property
-    # checked in integration/roundtrip tests, not in low-level table-shape tests.
 
 
 @pytest.mark.parametrize("table_log", TEST_TABLE_LOGS)
@@ -119,7 +115,7 @@ def test_decode_table_different_table_sizes(table_log):
 def test_decode_table_single_symbol():
     """Single-symbol distribution: all decode entries should decode to that symbol.
 
-    For canonical FSE, decode states stay in [0, table_size).
+    Decode states stay in [0, table_size).
     nb_bits is typically 0 in this degenerate case, but we only enforce range.
     """
     freq = Frequencies({"A": 10})
@@ -156,7 +152,7 @@ def test_encode_table_structure(freq_dict, table_log, description):
     assert len(table_u16) == table_size, f"Failed for {description}"
     assert len(symbol_tt) == len(norm_freq), f"Failed for {description}"
 
-    # Canonical FSE: tableU16 entries are encoder states in [tableSize, 2*tableSize).
+    # tableU16 entries are encoder states in [tableSize, 2*tableSize).
     for val in table_u16:
         assert table_size <= val < 2 * table_size, (
             f"{description}: Invalid tableU16 value {val}, "
@@ -243,6 +239,3 @@ def test_encode_table_single_symbol():
         assert (
             table_size <= val < 2 * table_size
         ), f"tableU16 value {val} should be in [{table_size}, {2 * table_size})"
-
-    # We don't enforce a specific delta_nb_bits here; that depends on normalization.
-    # Single-symbol encode behavior is exercised via roundtrip tests.
