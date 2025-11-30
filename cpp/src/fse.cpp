@@ -251,7 +251,8 @@ FSETables::FSETables(const FSEParams& params)
         const uint32_t next_state_enc = symbol_next[s];
         symbol_next[s] += 1;
 
-        const uint32_t nb_bits = table_log - floor_log2(next_state_enc);
+        const uint32_t safe_state = std::max(1u, next_state_enc);
+        const uint32_t nb_bits = table_log - floor_log2(safe_state);
         const uint32_t new_state_base = (next_state_enc << nb_bits) - table_size;
         dtable[u] = DecodeEntry{
             /*new_state_base=*/new_state_base,
@@ -291,7 +292,10 @@ FSETables::FSETables(const FSEParams& params)
                 continue;
             }
 
-            const uint32_t max_bits_out = table_log - floor_log2(freq - 1u);
+            uint32_t max_bits_out = table_log;
+            if (freq > 1) {
+                max_bits_out = table_log - floor_log2(freq - 1u);
+            }
             const uint32_t min_state_plus = freq << max_bits_out;
             const uint32_t delta_nb_bits = (max_bits_out << 16) - min_state_plus;
             const int32_t delta_find_state = static_cast<int32_t>(total) -

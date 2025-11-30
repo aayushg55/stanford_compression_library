@@ -1,0 +1,3 @@
+[submodule "lzbench"]
+	path = lzbench
+	url = https://github.com/inikep/lzbench.git
