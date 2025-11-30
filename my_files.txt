@@ -1,0 +1,17 @@
+# List of your new files to lint
+# Add one file path per line
+# Lines starting with # are ignored
+
+scl/compressors/fse.py
+
+scl/tests/unit/test_fse_normalization.py
+scl/tests/unit/test_fse_spreading.py
+scl/tests/unit/test_fse_tables.py
+scl/tests/unit/test_fse_symbol_ops.py
+scl/tests/integration/test_fse_end_to_end.py
+scl/tests/integration/test_fse_cpp_parity.py
+scl/tests/debug_utils.py
+scl/tests/conftest.py
+
+scl/benchmark/dataset_utils.py
+scl/benchmark/benchmark_fse.py

@@ -3,7 +3,11 @@ import random
 import pytest
 from bitarray import bitarray
 
-from scl.compressors.fse import FSEEncoder as PyEnc, FSEDecoder as PyDec, FSEParams as PyParams
+from scl.compressors.fse import (
+    FSEEncoder as PyEnc,
+    FSEDecoder as PyDec,
+    FSEParams as PyParams,
+)
 from scl.core.data_block import DataBlock
 from scl.core.prob_dist import Frequencies
 
