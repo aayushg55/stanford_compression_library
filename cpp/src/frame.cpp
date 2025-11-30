@@ -11,6 +11,8 @@
 namespace scl::fse {
 
 EncodedFrame encode_stream(const std::vector<uint8_t>& input, const FrameOptions& opts) {
+    fprintf(stderr, "[encode_stream] table_log=%u block_size=%zu lsb=%d wide=%d\n",
+            opts.table_log, opts.block_size, (int)opts.use_lsb, (int)opts.use_lsb_wide);
     EncodedFrame frame;
     frame.original_size = input.size();
     const size_t block_size = (opts.block_size == 0) ? input.size() : opts.block_size;
@@ -25,6 +27,7 @@ EncodedFrame encode_stream(const std::vector<uint8_t>& input, const FrameOptions
             counts[input[pos + i]]++;
         }
 
+        fprintf(stderr, "[encode_stream] building params table_log=%u\n", opts.table_log);
         FSEParams params(counts, opts.table_log);
         FSETables tables(params);
         symbols.assign(input.begin() + pos, input.begin() + pos + chunk);

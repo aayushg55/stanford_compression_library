@@ -43,6 +43,7 @@
 #define HUF_STATIC_LINKING_ONLY
 #include "huf.h"
 #include "xxhash.h"
+#include "scl_fse_wrapper.h"
 
 
 /*_************************************
@@ -523,6 +524,7 @@ static U32    g_bmi2 = 0;
 static size_t g_skip;
 static size_t g_cSize;
 static size_t g_oSize;
+static unsigned g_scl_level = 1;
 #define DTABLE_LOG 12
 HUF_CREATE_STATIC_DTABLEX2(g_huff_dtable, DTABLE_LOG);
 
@@ -669,6 +671,15 @@ static int local_HUF_decompress1X2(void* dst, size_t maxDstSize, const void* src
 {
     (void)srcSize; (void)maxDstSize;
     return (int)HUF_decompress1X2(dst, g_oSize, src, g_cSize);
+}
+
+static int local_SCLFSE_compress(void* dst, size_t dstSize, const void* src, size_t srcSize) {
+    return (int)sclfse_compress_level(src, srcSize, dst, dstSize, (int)g_scl_level);
+}
+
+static int local_SCLFSE_decompress(void* dst, size_t dstSize, const void* src, size_t srcSize) {
+    (void)dstSize;
+    return (int)sclfse_decompress_level(dst, dstSize, src, srcSize, (int)g_scl_level);
 }
 
 static int local_HUF_readStats(void* dst, size_t maxDstSize, const void* src, size_t srcSize)
@@ -1091,6 +1102,51 @@ int runBench(const void* buffer, size_t blockSize, U32 algNb, U32 nbBenchs)
             func = local_HUF_decompress4X2_usingDTable;
             break;
         }
+
+    case 90:
+        g_scl_level = 1;
+        funcName = "scl_fse_1_compress";
+        func = local_SCLFSE_compress;
+        break;
+
+    case 91:
+        g_scl_level = 1;
+        g_cSize = sclfse_compress_level(oBuffer, benchedSize, cBuffer, cBuffSize, (int)g_scl_level);
+        memcpy(oBuffer, cBuffer, g_cSize);
+        g_oSize = benchedSize;
+        funcName = "scl_fse_1_decompress";
+        func = local_SCLFSE_decompress;
+        break;
+
+    case 92:
+        g_scl_level = 2;
+        funcName = "scl_fse_2_compress";
+        func = local_SCLFSE_compress;
+        break;
+
+    case 93:
+        g_scl_level = 2;
+        g_cSize = sclfse_compress_level(oBuffer, benchedSize, cBuffer, cBuffSize, (int)g_scl_level);
+        memcpy(oBuffer, cBuffer, g_cSize);
+        g_oSize = benchedSize;
+        funcName = "scl_fse_2_decompress";
+        func = local_SCLFSE_decompress;
+        break;
+
+    case 94:
+        g_scl_level = 4;
+        funcName = "scl_fse_4_compress";
+        func = local_SCLFSE_compress;
+        break;
+
+    case 95:
+        g_scl_level = 4;
+        g_cSize = sclfse_compress_level(oBuffer, benchedSize, cBuffer, cBuffSize, (int)g_scl_level);
+        memcpy(oBuffer, cBuffer, g_cSize);
+        g_oSize = benchedSize;
+        funcName = "scl_fse_4_decompress";
+        func = local_SCLFSE_decompress;
+        break;
 
     case 53:
         {

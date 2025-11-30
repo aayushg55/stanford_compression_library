@@ -63,6 +63,11 @@ FSEParams::FSEParams(const std::vector<uint32_t>& counts_in,
       normalized(counts_in.size(), 0),
       data_block_size_bits(data_block_size_bits_in),
       initial_state(1u << table_log_in) {
+    if (table_log_in > 16) {
+        fprintf(stderr, "[sclfse] FSEParams table_log_in=%u exceeds 16, clamping to 12\n", table_log_in);
+        table_log = 12;
+        throw std::invalid_argument("FSEParams: table_log exceeds 16");
+    }
     if (counts.empty()) {
         throw std::invalid_argument("FSEParams: counts must not be empty");
     }
@@ -166,6 +171,8 @@ FSETables::FSETables(const FSEParams& params)
       data_block_size_bits(params.data_block_size_bits),
       alphabet_size(params.counts.size()) {
     if (table_log > 16) {
+        fprintf(stderr, "FSETables: table_log=%u exceeds 16 (counts=%zu)\n",
+                table_log, alphabet_size);
         throw std::invalid_argument("FSETables: table_log too large for 16-bit new_state_base");
     }
     const auto& norm = params.normalized;

@@ -27,6 +27,8 @@
 
 RELEASE    = v0.3.4
 FSEDIR     = ../lib
+SCLFSE_INC = ../../cpp/include
+SCLFSE_LIB = ../../cpp/build/libscl_fse.a
 
 ifeq ($(shell $(CC) -v 2>&1 | grep -c "gcc version "), 1)
 ALIGN_LOOP = # -falign-functions=16 # -falign-loops=32
@@ -92,11 +94,16 @@ fuzzerHuff0 fuzzerHuff0_32: fuzzerHuff0.c xxhash.c $(FSEDIR)/entropy_common.c $(
 
 fullbench32: CFLAGS += -m32
 fullbenchx32: CFLAGS += -mx32
-fullbench fullbench32 fullbenchx32: fullbench.c xxhash.c $(FSEDIR)/entropy_common.c $(FSEDIR)/hist.c \
+fullbench fullbench32 fullbenchx32: fullbench.c xxhash.c scl_fse_wrapper.o scl_frame.o $(FSEDIR)/entropy_common.c $(FSEDIR)/hist.c \
                                     $(FSEDIR)/fse_decompress.c $(FSEDIR)/fse_compress.c $(FSEDIR)/fseU16.c \
-                                    $(FSEDIR)/huf_compress.c $(FSEDIR)/huf_decompress.c
-	$(CC) $(FLAGS) $^ -o $@$(EXT)
+                                    $(FSEDIR)/huf_compress.c $(FSEDIR)/huf_decompress.c $(SCLFSE_LIB)
+	$(CXX) $(FLAGS) -I$(SCLFSE_INC) $^ -o $@$(EXT) -lstdc++
 
+scl_fse_wrapper.o: scl_fse_wrapper.cpp scl_fse_wrapper.h
+	$(CXX) $(FLAGS) -I$(SCLFSE_INC) -c $< -o $@
+
+scl_frame.o: ../../cpp/src/frame.cpp
+	$(CXX) $(FLAGS) -I$(SCLFSE_INC) -c $< -o $@
 probagen: probaGenerator.c
 	$(CC) $(FLAGS) $^ -o $@$(EXT)
 

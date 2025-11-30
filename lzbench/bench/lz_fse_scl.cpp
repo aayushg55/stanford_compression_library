@@ -9,46 +9,11 @@
 #include <vector>
 
 #include "scl/fse/frame.hpp"
+#include "scl/fse/levels.hpp"
 
 using namespace scl::fse;
 
 namespace {
-
-struct BenchConfig {
-    FSELevel level;
-    uint32_t table_log;
-    size_t block_size; // 0 => single block
-    bool use_lsb;
-    bool use_lsb_wide;
-};
-
-BenchConfig config_from_level(int lvl) {
-    if (lvl <= 1) {
-        // Single-block, MSB baseline
-        return BenchConfig{FSELevel::L0_Spec, 11, 0, /*use_lsb=*/false, /*use_lsb_wide=*/false};
-    }
-    if (lvl == 2) {
-        // Single-block, LSB baseline (faster)
-        return BenchConfig{FSELevel::L0_Spec, 11, 0, /*use_lsb=*/true, /*use_lsb_wide=*/false};
-    }
-    if (lvl == 3) {
-        // Single-block, LSB with 64-bit chunked writer
-        return BenchConfig{FSELevel::L0_Spec, 11, 0, /*use_lsb=*/true, /*use_lsb_wide=*/true};
-    }
-    if (lvl <= 4) {
-        // Framed, clean path
-        uint32_t tl = (lvl == 4) ? 11 : 11;
-        return BenchConfig{FSELevel::L0_Spec, tl, 32 * 1024, true, /*use_lsb_wide=*/true};
-    }
-    if (lvl <= 8) {
-        // Tuned path, larger table/block as level increases
-        uint32_t tl = (lvl <= 6) ? 11 : 12;
-        size_t bs = (lvl <= 6) ? 32 * 1024 : 64 * 1024;
-        return BenchConfig{FSELevel::L2_Tuned, tl, bs, true, /*use_lsb_wide=*/false};
-    }
-    // Experimental path
-    return BenchConfig{FSELevel::L3_Experimental, 12, 64 * 1024, true, /*use_lsb_wide=*/false};
-}
 
 struct FSEBenchCtx {
     BenchConfig config;
