@@ -361,12 +361,29 @@ class FSEEncoderLSB : public IFSEEncoder {
 public:
     explicit FSEEncoderLSB(const FSETables& tables) : tables_(tables) {}
     EncodedBlock encode_block(const std::vector<uint8_t>& symbols) const override {
-        return encode_block_impl<BitWriterLSB>(symbols, tables_);
+        return encode_block_impl<BitWriterLSB8>(symbols, tables_);
     }
     size_t encode_block_into(const std::vector<uint8_t>& symbols,
                              std::vector<uint8_t>& out_bytes) const override {
-        BitWriterLSB writer(out_bytes);
+        BitWriterLSB8 writer(out_bytes);
         return encode_block_impl_into(symbols, tables_, writer);
+    }
+private:
+    const FSETables& tables_;
+};
+
+class FSEEncoderLSB64 : public IFSEEncoder {
+public:
+    explicit FSEEncoderLSB64(const FSETables& tables) : tables_(tables) {}
+    EncodedBlock encode_block(const std::vector<uint8_t>& symbols) const override {
+        return encode_block_impl<BitWriterLSB64>(symbols, tables_);
+    }
+    size_t encode_block_into(const std::vector<uint8_t>& symbols,
+                             std::vector<uint8_t>& out_bytes) const override {
+        BitWriterLSB64 writer;
+        const size_t bit_count = encode_block_impl_into(symbols, tables_, writer);
+        out_bytes = writer.move_buffer();
+        return bit_count;
     }
 private:
     const FSETables& tables_;
@@ -408,9 +425,17 @@ std::unique_ptr<IFSEDecoder> make_decoder_core(FSELevel level, const FSETables& 
     }
 }
 
-std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level, const FSETables& tables, bool use_lsb) {
-    return use_lsb ? make_encoder_core<FSEEncoderLSB>(level, tables)
-                   : make_encoder_core<FSEEncoderMSB>(level, tables);
+std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level,
+                                          const FSETables& tables,
+                                          bool use_lsb,
+                                          bool use_lsb_wide) {
+    if (!use_lsb) {
+        return make_encoder_core<FSEEncoderMSB>(level, tables);
+    }
+    if (use_lsb_wide) {
+        return make_encoder_core<FSEEncoderLSB64>(level, tables);
+    }
+    return make_encoder_core<FSEEncoderLSB>(level, tables);
 }
 
 std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables, bool use_lsb) {

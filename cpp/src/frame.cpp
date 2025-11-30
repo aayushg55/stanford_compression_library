@@ -28,7 +28,7 @@ EncodedFrame encode_stream(const std::vector<uint8_t>& input, const FrameOptions
         FSEParams params(counts, opts.table_log);
         FSETables tables(params);
         symbols.assign(input.begin() + pos, input.begin() + pos + chunk);
-        auto encoder = make_encoder(opts.level, tables, opts.use_lsb);
+        auto encoder = make_encoder(opts.level, tables, opts.use_lsb, opts.use_lsb_wide);
         const size_t bit_count = encoder->encode_block_into(symbols, payload);
 
         uint32_t blk_sz_u32 = static_cast<uint32_t>(chunk);

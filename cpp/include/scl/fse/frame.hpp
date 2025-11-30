@@ -12,6 +12,7 @@ struct FrameOptions {
     uint32_t table_log = 12;       // hint/override; currently used as fixed
     FSELevel level = FSELevel::L0_Spec;
     bool use_lsb = false;
+    bool use_lsb_wide = false;     // use 64-bit chunked LSB writer
 };
 
 struct EncodedFrame {
