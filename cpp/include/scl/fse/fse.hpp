@@ -25,11 +25,13 @@ struct DecodeEntry {
     uint8_t nb_bits = 0;
     uint8_t symbol = 0;
 };
+static_assert(sizeof(DecodeEntry) == 4, "DecodeEntry should remain 4 bytes");
 
 struct SymTransform {
     uint32_t delta_nb_bits = 0;
     int32_t delta_find_state = 0;
 };
+static_assert(sizeof(SymTransform) == 8, "SymTransform should remain 8 bytes");
 
 struct FSEParams {
     std::vector<uint32_t> counts;       // histogram (size = alphabet)
