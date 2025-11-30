@@ -96,7 +96,7 @@ private:
 };
 
 // Factories to select encoder/decoder level at runtime.
-std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level, const FSETables& tables);
-std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables);
+std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level, const FSETables& tables, bool use_lsb = false);
+std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables, bool use_lsb = false);
 
 } // namespace scl::fse

@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "scl/fse/bitio.hpp"
+
 namespace scl::fse {
 
 namespace {
@@ -40,82 +42,6 @@ uint32_t round_ties_to_even(double x) {
     }
     return static_cast<uint32_t>(floor_x);
 }
-
-// Bit writer/reader: big-endian per bit (bit 0 of stream is MSB of byte 0).
-class BitWriter {
-public:
-    void append_bits(uint32_t value, uint32_t nbits) {
-        if (nbits == 0) return;
-        for (int i = static_cast<int>(nbits) - 1; i >= 0; --i) {
-            append_bit((value >> i) & 1u);
-        }
-    }
-
-    void append_bits(const std::vector<uint8_t>& bits) {
-        for (uint8_t b : bits) {
-            append_bit(b & 1u);
-        }
-    }
-
-    EncodedBlock finish() && {
-        return EncodedBlock{std::move(bytes_), bit_len_};
-    }
-
-private:
-    void append_bit(uint32_t bit) {
-        const size_t byte_idx = bit_len_ / 8;
-        const size_t bit_in_byte = bit_len_ % 8;
-        if (byte_idx >= bytes_.size()) {
-            bytes_.push_back(0);
-        }
-        // Big-endian bit numbering inside a byte: first bit is MSB.
-        const uint8_t mask = static_cast<uint8_t>(1u << (7u - bit_in_byte));
-        if (bit) {
-            bytes_[byte_idx] |= mask;
-        }
-        ++bit_len_;
-    }
-
-    std::vector<uint8_t> bytes_;
-    size_t bit_len_ = 0;
-};
-
-class BitReader {
-public:
-    BitReader(const uint8_t* data, size_t total_bits, size_t offset_bits = 0)
-        : data_(data), total_bits_(total_bits), bit_pos_(offset_bits) {
-        if (offset_bits > total_bits_) {
-            throw std::runtime_error("BitReader: offset exceeds total bits");
-        }
-    }
-
-    uint32_t read_bits(uint32_t nbits) {
-        if (nbits == 0) return 0;
-        if (bit_pos_ + nbits > total_bits_) {
-            throw std::runtime_error("BitReader: out of bits");
-        }
-
-        uint32_t value = 0;
-        for (uint32_t i = 0; i < nbits; ++i) {
-            const size_t bit_index = bit_pos_ + i;
-            const size_t byte_idx = bit_index / 8;
-            const size_t bit_in_byte = bit_index % 8;
-            const uint8_t byte = data_[byte_idx];
-            const uint8_t bit = static_cast<uint8_t>((byte >> (7u - bit_in_byte)) & 1u);
-            value = static_cast<uint32_t>((value << 1) | bit);
-        }
-
-        bit_pos_ += nbits;
-        return value;
-    }
-
-    size_t position() const { return bit_pos_; }
-
-private:
-    const uint8_t* data_;
-    size_t total_bits_;
-    size_t bit_pos_;
-};
 
 std::vector<uint8_t> bits_from_value(uint32_t value, uint32_t width) {
     std::vector<uint8_t> bits;
@@ -307,80 +233,77 @@ FSETables::FSETables(const FSEParams& params)
     }
 }
 
-FSEEncoderSpec::FSEEncoderSpec(const FSETables& tables) : tables_(tables) {}
-
-EncodedBlock FSEEncoderSpec::encode_block(const std::vector<uint8_t>& symbols) const {
-    BitWriter writer;
-
+template <class Writer>
+EncodedBlock encode_block_impl(const std::vector<uint8_t>& symbols, const FSETables& tables) {
+    Writer writer;
     const uint32_t block_size = static_cast<uint32_t>(symbols.size());
-    writer.append_bits(block_size, tables_.data_block_size_bits);
-
+    writer.append_bits(block_size, tables.data_block_size_bits);
     if (symbols.empty()) {
         return std::move(writer).finish();
     }
 
-    uint32_t state = tables_.table_size;
-    std::vector<std::vector<uint8_t>> chunks;
-    chunks.reserve(symbols.size());
+    uint32_t state = tables.table_size;
+    std::vector<uint32_t> chunk_vals;
+    std::vector<uint32_t> chunk_bits;
+    chunk_vals.reserve(symbols.size());
+    chunk_bits.reserve(symbols.size());
 
     for (auto it = symbols.rbegin(); it != symbols.rend(); ++it) {
         const uint8_t s = *it;
-        if (s >= tables_.symTT.size()) {
+        if (s >= tables.symTT.size()) {
             fprintf(stderr, "FSEEncoderSpec: symbol %u out of range (size %zu)\n",
-                    static_cast<unsigned>(s), tables_.symTT.size());
+                    static_cast<unsigned>(s), tables.symTT.size());
             throw std::runtime_error("FSEEncoderSpec: symbol out of range for tables");
         }
-        const SymTransform& tr = tables_.symTT[s];
+        const SymTransform& tr = tables.symTT[s];
 
         const uint32_t nb_out = (state + tr.delta_nb_bits) >> 16;
         const uint32_t mask = (nb_out == 32) ? 0xFFFFFFFFu : ((1u << nb_out) - 1u);
         const uint32_t out_bits_value = state & mask;
 
-        if (nb_out > 0) {
-            chunks.push_back(bits_from_value(out_bits_value, nb_out));
-        } else {
-            chunks.emplace_back();
-        }
+        chunk_vals.push_back(out_bits_value);
+        chunk_bits.push_back(nb_out);
 
         const uint32_t subrange_id = state >> nb_out;
         const uint32_t idx = subrange_id + static_cast<uint32_t>(tr.delta_find_state);
-        state = tables_.tableU16[idx];
+        state = tables.tableU16[idx];
     }
 
-    assert(state >= tables_.table_size && state < tables_.table_size * 2);
-    const uint32_t final_state_offset = state - tables_.table_size;
-    writer.append_bits(final_state_offset, tables_.table_log);
+    assert(state >= tables.table_size && state < tables.table_size * 2);
+    const uint32_t final_state_offset = state - tables.table_size;
+    writer.append_bits(final_state_offset, tables.table_log);
 
-    for (auto it = chunks.rbegin(); it != chunks.rend(); ++it) {
-        writer.append_bits(*it);
+    for (auto val_it = chunk_vals.rbegin(), bits_it = chunk_bits.rbegin();
+         val_it != chunk_vals.rend(); ++val_it, ++bits_it) {
+        if (*bits_it) writer.append_bits(*val_it, *bits_it);
     }
 
     return std::move(writer).finish();
 }
 
-FSEDecoderSpec::FSEDecoderSpec(const FSETables& tables) : tables_(tables) {}
-
-DecodeResult FSEDecoderSpec::decode_block(const uint8_t* bits,
-                                          size_t bit_len,
-                                          size_t bit_offset) const {
-    BitReader br(bits, bit_len, bit_offset);
+template <class Reader>
+DecodeResult decode_block_impl(const uint8_t* bits,
+                               size_t bit_len,
+                               size_t bit_offset,
+                               const FSETables& tables) {
+    Reader br(bits, bit_len, bit_offset);
     DecodeResult result;
 
-    const uint32_t block_size = br.read_bits(tables_.data_block_size_bits);
-    result.bits_consumed = tables_.data_block_size_bits;
+    const uint32_t block_size = br.read_bits(tables.data_block_size_bits);
+    result.bits_consumed = tables.data_block_size_bits;
 
     if (block_size == 0) {
         return result;
     }
 
-    const uint32_t state_offset = br.read_bits(tables_.table_log);
+    const uint32_t state_offset = br.read_bits(tables.table_log);
     uint32_t state = state_offset;
-    result.bits_consumed += tables_.table_log;
+    result.bits_consumed += tables.table_log;
 
     result.symbols.resize(block_size);
 
     for (size_t i = 0; i < block_size; ++i) {
-        const DecodeEntry& entry = tables_.dtable[state];
+        const DecodeEntry& entry = tables.dtable[state];
         uint32_t bits_val = 0;
         if (entry.nb_bits > 0) {
             bits_val = br.read_bits(entry.nb_bits);
@@ -398,19 +321,60 @@ DecodeResult FSEDecoderSpec::decode_block(const uint8_t* bits,
     return result;
 }
 
-std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level, const FSETables& tables) {
+FSEEncoderSpec::FSEEncoderSpec(const FSETables& tables) : tables_(tables) {}
+
+EncodedBlock FSEEncoderSpec::encode_block(const std::vector<uint8_t>& symbols) const {
+    return encode_block_impl<BitWriterMSB>(symbols, tables_);
+}
+
+FSEDecoderSpec::FSEDecoderSpec(const FSETables& tables) : tables_(tables) {}
+
+DecodeResult FSEDecoderSpec::decode_block(const uint8_t* bits,
+                                          size_t bit_len,
+                                          size_t bit_offset) const {
+    return decode_block_impl<BitReaderMSB>(bits, bit_len, bit_offset, tables_);
+}
+
+class FSEEncoderLSB : public IFSEEncoder {
+public:
+    explicit FSEEncoderLSB(const FSETables& tables) : tables_(tables) {}
+    EncodedBlock encode_block(const std::vector<uint8_t>& symbols) const override {
+        return encode_block_impl<BitWriterLSB>(symbols, tables_);
+    }
+private:
+    const FSETables& tables_;
+};
+
+class FSEDecoderLSB : public IFSEDecoder {
+public:
+    explicit FSEDecoderLSB(const FSETables& tables) : tables_(tables) {}
+    DecodeResult decode_block(const uint8_t* bits,
+                              size_t bit_len,
+                              size_t bit_offset = 0) const override {
+        return decode_block_impl<BitReaderLSB>(bits, bit_len, bit_offset, tables_);
+    }
+private:
+    const FSETables& tables_;
+};
+
+std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level, const FSETables& tables, bool use_lsb) {
+    if (use_lsb) {
+        return std::make_unique<FSEEncoderLSB>(tables);
+    }
     switch (level) {
         case FSELevel::L0_Spec:
         case FSELevel::L1_Clean:
         case FSELevel::L2_Tuned:
         case FSELevel::L3_Experimental:
         default:
-            // Future levels can branch to dedicated implementations.
             return std::make_unique<FSEEncoderSpec>(tables);
     }
 }
 
-std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables) {
+std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables, bool use_lsb) {
+    if (use_lsb) {
+        return std::make_unique<FSEDecoderLSB>(tables);
+    }
     switch (level) {
         case FSELevel::L0_Spec:
         case FSELevel::L1_Clean:
