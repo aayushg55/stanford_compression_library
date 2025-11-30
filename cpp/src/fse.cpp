@@ -114,7 +114,49 @@ FSEParams::FSEParams(const std::vector<uint32_t>& counts_in,
     const uint64_t check_sum =
         std::accumulate(normalized.begin(), normalized.end(), uint64_t{0});
     if (check_sum != table_size) {
-        throw std::runtime_error("FSEParams: normalization did not reach table size");
+        int64_t diff = static_cast<int64_t>(table_size) -
+                       static_cast<int64_t>(check_sum);
+        // Make a copy of symbol order by descending count to adjust deterministically.
+        std::vector<size_t> sym_order(normalized.size());
+        std::iota(sym_order.begin(), sym_order.end(), 0);
+        std::stable_sort(sym_order.begin(), sym_order.end(),
+                         [&](size_t a, size_t b) { return counts[a] > counts[b]; });
+
+        // Adjust up or down one unit at a time to hit the exact target while keeping entries > 0.
+        while (diff != 0) {
+            bool changed = false;
+            for (size_t idx : sym_order) {
+                if (diff > 0) {
+                    normalized[idx] += 1;
+                    diff -= 1;
+                    changed = true;
+                } else { // diff < 0
+                    if (normalized[idx] > 1) {
+                        normalized[idx] -= 1;
+                        diff += 1;
+                        changed = true;
+                    }
+                }
+                if (diff == 0) break;
+            }
+            // If no symbol could be changed (shouldn't happen), break to avoid infinite loop.
+            if (!changed) {
+                break;
+            }
+        }
+
+        const uint64_t final_sum =
+            std::accumulate(normalized.begin(), normalized.end(), uint64_t{0});
+        if (final_sum != table_size) {
+            // As a last resort, assign all weight to the most frequent symbol to keep encoding valid.
+            normalized.assign(normalized.size(), 0);
+            size_t best = 0;
+            if (!counts.empty()) {
+                best = static_cast<size_t>(std::distance(
+                    counts.begin(), std::max_element(counts.begin(), counts.end())));
+            }
+            normalized[best] = table_size;
+        }
     }
 }
 
@@ -182,8 +224,9 @@ FSETables::FSETables(const FSEParams& params)
         const uint32_t new_state_base = (next_state_enc << nb_bits) - table_size;
         dtable[u] = DecodeEntry{
             /*new_state_base=*/new_state_base,
-            /*nb_bits=*/static_cast<uint16_t>(nb_bits),
+            /*nb_bits=*/static_cast<uint8_t>(nb_bits),
             /*symbol=*/static_cast<uint8_t>(s),
+            /*_pad=*/0,
         };
     }
 

@@ -172,7 +172,7 @@ public:
 
     void reserve(size_t nbytes) { buffer_.reserve(nbytes); }
 
-    void append_bits(uint32_t value, uint32_t nbits) {
+    void inline append_bits(uint32_t value, uint32_t nbits) {
         if (nbits == 0) return;
         // Fast path: everything fits without flush.
         if (bit_count_ + nbits < 64) {
@@ -192,7 +192,10 @@ public:
     size_t finish_into() {
         const size_t total_bits_val = buffer_.size() * 8 + bit_count_;
         if (bit_count_ > 0) {
-            emit_word(bit_buffer_);
+            const size_t tail_bytes = (bit_count_ + 7) / 8;
+            const size_t base = buffer_.size();
+            buffer_.resize(base + tail_bytes);
+            std::memcpy(buffer_.data() + base, &bit_buffer_, tail_bytes);
             bit_buffer_ = 0;
             bit_count_ = 0;
         }

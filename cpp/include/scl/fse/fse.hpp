@@ -22,8 +22,9 @@ struct EncodedBlock {
 
 struct DecodeEntry {
     uint32_t new_state_base = 0;
-    uint16_t nb_bits = 0;
+    uint8_t nb_bits = 0; // fits table_log (<= 16)
     uint8_t symbol = 0;
+    uint16_t _pad = 0; // keep structure 8-byte aligned
 };
 
 struct SymTransform {

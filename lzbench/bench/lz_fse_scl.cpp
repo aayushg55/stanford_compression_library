@@ -38,7 +38,7 @@ BenchConfig config_from_level(int lvl) {
     if (lvl <= 4) {
         // Framed, clean path
         uint32_t tl = (lvl == 4) ? 12 : 11;
-        return BenchConfig{FSELevel::L1_Clean, tl, 32 * 1024, true, /*use_lsb_wide=*/false};
+        return BenchConfig{FSELevel::L0_Spec, tl, 32 * 1024, true, /*use_lsb_wide=*/true};
     }
     if (lvl <= 8) {
         // Tuned path, larger table/block as level increases
