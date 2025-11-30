@@ -164,11 +164,39 @@ FSETables::FSETables(const FSEParams& params)
     : table_log(params.table_log),
       table_size(params.table_size),
       data_block_size_bits(params.data_block_size_bits),
-      dtable(table_size),
-      tableU16(table_size, 0),
-      symTT(params.counts.size()) {
+      alphabet_size(params.counts.size()) {
+    if (table_log > 16) {
+        throw std::invalid_argument("FSETables: table_log too large for 16-bit new_state_base");
+    }
     const auto& norm = params.normalized;
-    const size_t alphabet_size = norm.size();
+    const size_t alpha = norm.size();
+
+    auto align_up = [](size_t off, size_t align) {
+        const size_t mask = align - 1;
+        return (off + mask) & ~mask;
+    };
+
+    size_t offset = 0;
+    const size_t dtable_bytes = table_size * sizeof(DecodeEntry);
+    const size_t tableU16_bytes = table_size * sizeof(uint16_t);
+    const size_t sym_bytes = alpha * sizeof(SymTransform);
+
+    offset = align_up(offset, alignof(DecodeEntry));
+    const size_t dtable_off = offset;
+    offset += dtable_bytes;
+
+    offset = align_up(offset, alignof(uint16_t));
+    const size_t tableU16_off = offset;
+    offset += tableU16_bytes;
+
+    offset = align_up(offset, alignof(SymTransform));
+    const size_t sym_off = offset;
+    offset += sym_bytes;
+
+    slab.resize(offset, 0);
+    dtable = reinterpret_cast<DecodeEntry*>(slab.data() + dtable_off);
+    tableU16 = reinterpret_cast<uint16_t*>(slab.data() + tableU16_off);
+    symTT = reinterpret_cast<SymTransform*>(slab.data() + sym_off);
 
     // Build spread table with co-prime step algorithm.
     const uint32_t table_mask = table_size - 1;
@@ -177,7 +205,7 @@ FSETables::FSETables(const FSEParams& params)
     std::vector<uint32_t> spread(table_size, std::numeric_limits<uint32_t>::max());
     std::vector<uint32_t> syms;
     syms.reserve(table_size);
-    for (uint32_t s = 0; s < alphabet_size; ++s) {
+    for (uint32_t s = 0; s < alpha; ++s) {
         for (uint32_t i = 0; i < norm[s]; ++i) {
             syms.push_back(s);
         }
@@ -223,18 +251,17 @@ FSETables::FSETables(const FSEParams& params)
         const uint32_t nb_bits = table_log - floor_log2(safe_state);
         const uint32_t new_state_base = (next_state_enc << nb_bits) - table_size;
         dtable[u] = DecodeEntry{
-            /*new_state_base=*/new_state_base,
+            /*new_state_base=*/static_cast<uint16_t>(new_state_base),
             /*nb_bits=*/static_cast<uint8_t>(nb_bits),
             /*symbol=*/static_cast<uint8_t>(s),
-            /*_pad=*/0,
         };
     }
 
     // Build encode table and symbol transforms.
-    std::vector<uint32_t> cumul(alphabet_size, 0);
+    std::vector<uint32_t> cumul(alpha, 0);
     {
         uint32_t acc = 0;
-        for (uint32_t s = 0; s < alphabet_size; ++s) {
+        for (uint32_t s = 0; s < alpha; ++s) {
             cumul[s] = acc;
             acc += norm[s];
         }
@@ -252,7 +279,7 @@ FSETables::FSETables(const FSEParams& params)
 
     {
         uint32_t total = 0;
-        for (uint32_t s = 0; s < alphabet_size; ++s) {
+        for (uint32_t s = 0; s < alpha; ++s) {
             const uint32_t freq = norm[s];
             if (freq == 0) {
                 const uint32_t delta_nb_bits =
@@ -300,9 +327,9 @@ size_t encode_block_impl_into(const std::vector<uint8_t>& symbols,
     for (auto it = symbols.rbegin(); it != symbols.rend(); ++it) {
         const uint8_t s = *it;
 #ifndef NDEBUG
-        if (s >= tables.symTT.size()) {
+        if (s >= tables.alphabet_size) {
             fprintf(stderr, "FSEEncoderMSB: symbol %u out of range (size %zu)\n",
-                    static_cast<unsigned>(s), tables.symTT.size());
+                    static_cast<unsigned>(s), tables.alphabet_size);
             throw std::runtime_error("FSEEncoderMSB: symbol out of range for tables");
         }
 #endif

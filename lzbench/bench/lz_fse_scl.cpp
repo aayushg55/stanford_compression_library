@@ -25,19 +25,19 @@ struct BenchConfig {
 BenchConfig config_from_level(int lvl) {
     if (lvl <= 1) {
         // Single-block, MSB baseline
-        return BenchConfig{FSELevel::L0_Spec, 12, 0, /*use_lsb=*/false, /*use_lsb_wide=*/false};
+        return BenchConfig{FSELevel::L0_Spec, 11, 0, /*use_lsb=*/false, /*use_lsb_wide=*/false};
     }
     if (lvl == 2) {
         // Single-block, LSB baseline (faster)
-        return BenchConfig{FSELevel::L0_Spec, 12, 0, /*use_lsb=*/true, /*use_lsb_wide=*/false};
+        return BenchConfig{FSELevel::L0_Spec, 11, 0, /*use_lsb=*/true, /*use_lsb_wide=*/false};
     }
     if (lvl == 3) {
         // Single-block, LSB with 64-bit chunked writer
-        return BenchConfig{FSELevel::L0_Spec, 12, 0, /*use_lsb=*/true, /*use_lsb_wide=*/true};
+        return BenchConfig{FSELevel::L0_Spec, 11, 0, /*use_lsb=*/true, /*use_lsb_wide=*/true};
     }
     if (lvl <= 4) {
         // Framed, clean path
-        uint32_t tl = (lvl == 4) ? 12 : 11;
+        uint32_t tl = (lvl == 4) ? 11 : 11;
         return BenchConfig{FSELevel::L0_Spec, tl, 32 * 1024, true, /*use_lsb_wide=*/true};
     }
     if (lvl <= 8) {

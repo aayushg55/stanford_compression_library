@@ -21,10 +21,9 @@ struct EncodedBlock {
 };
 
 struct DecodeEntry {
-    uint32_t new_state_base = 0;
-    uint8_t nb_bits = 0; // fits table_log (<= 16)
+    uint16_t new_state_base = 0; // table_log capped -> fits in 16 bits
+    uint8_t nb_bits = 0;
     uint8_t symbol = 0;
-    uint16_t _pad = 0; // keep structure 8-byte aligned
 };
 
 struct SymTransform {
@@ -49,10 +48,12 @@ struct FSETables {
     uint32_t table_log = 0;
     uint32_t table_size = 0;
     uint32_t data_block_size_bits = 32;
+    size_t alphabet_size = 0;
 
-    std::vector<DecodeEntry> dtable;     // decode table
-    std::vector<uint16_t> tableU16;      // encode table
-    std::vector<SymTransform> symTT;     // per symbol transforms
+    std::vector<uint8_t> slab;           // contiguous storage for all tables
+    DecodeEntry* dtable = nullptr;       // decode table
+    uint16_t* tableU16 = nullptr;        // encode table
+    SymTransform* symTT = nullptr;       // per symbol transforms
 
     explicit FSETables(const FSEParams& params);
 };
