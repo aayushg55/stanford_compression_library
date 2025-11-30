@@ -9,13 +9,12 @@
 
 namespace scl::fse {
 
-// LSB-first bit writer, parameterized by flush width (8 or 64 bits).
+// LSB-first bit writer, parameterized by flush width (8 bits).
 template <size_t FlushBits>
 class BitWriterLSBGeneric {
-    static_assert(FlushBits == 8 || FlushBits == 64, "FlushBits must be 8 or 64");
+    static_assert(FlushBits == 8, "BitWriterLSBGeneric only supports 8-bit flush");
     static constexpr size_t kFlushBytes = FlushBits / 8;
-    static constexpr uint64_t kFlushMask =
-        (FlushBits == 64) ? ~0ull : ((1ull << FlushBits) - 1ull);
+    static constexpr uint64_t kFlushMask = (1ull << FlushBits) - 1ull;
 public:
     BitWriterLSBGeneric() = default;
     explicit BitWriterLSBGeneric(std::vector<uint8_t>& external) : external_(&external) { reset(); }
@@ -30,40 +29,14 @@ public:
 
     void append_bits(uint32_t value, uint32_t nbits) {
         if (nbits == 0) return;
-        uint64_t val = value;
-
-        if constexpr (FlushBits == 64) {
-            // At most one flush because nbits <= 32 and bit_count_ < 64.
-            const uint32_t space = static_cast<uint32_t>(FlushBits - bit_count_);
-            if (nbits >= space) {
-                bit_buffer_ |= (val & ((space == 64) ? ~0ull : ((1ull << space) - 1ull)))
-                               << bit_count_;
-                // Emit full 64-bit word.
-                auto& buf = buffer();
-                const size_t base = buf.size();
-                buf.resize(base + kFlushBytes);
-                std::memcpy(buf.data() + base, &bit_buffer_, kFlushBytes);
-                // Carry any remaining bits into a fresh buffer.
-                const uint32_t consumed = space;
-                val >>= consumed;
-                nbits -= consumed;
-                bit_buffer_ = 0;
-                bit_count_ = 0;
-            }
-            if (nbits > 0) {
-                bit_buffer_ |= val << bit_count_;
-                bit_count_ += nbits;
-            }
-        } else { // FlushBits == 8
-            bit_buffer_ |= val << bit_count_;
-            bit_count_ += nbits;
-            while (bit_count_ >= FlushBits) {
-                const uint64_t chunk = bit_buffer_ & kFlushMask;
-                auto& buf = buffer();
-                buf.push_back(static_cast<uint8_t>(chunk & 0xFFu));
-                bit_buffer_ >>= FlushBits;
-                bit_count_ -= FlushBits;
-            }
+        bit_buffer_ |= static_cast<uint64_t>(value) << bit_count_;
+        bit_count_ += nbits;
+        while (bit_count_ >= FlushBits) {
+            const uint64_t chunk = bit_buffer_ & kFlushMask;
+            auto& buf = buffer();
+            buf.push_back(static_cast<uint8_t>(chunk & 0xFFu));
+            bit_buffer_ >>= FlushBits;
+            bit_count_ -= FlushBits;
         }
     }
 
@@ -102,7 +75,152 @@ private:
 };
 
 using BitWriterLSB8 = BitWriterLSBGeneric<8>;
-using BitWriterLSB64 = BitWriterLSBGeneric<64>;
+
+#if false && defined(__SIZEOF_INT128__)
+// 128-bit flush variant for platforms with __uint128_t support.
+class BitWriterLSB128 {
+public:
+    BitWriterLSB128() = default;
+    explicit BitWriterLSB128(std::vector<uint8_t>& external) : external_(&external) { reset(); }
+
+    void reset() {
+        buffer().clear();
+        bit_buffer_ = 0;
+        bit_count_ = 0;
+    }
+
+    void reserve(size_t nbytes) { buffer().reserve(nbytes); }
+
+    void append_bits(uint32_t value, uint32_t nbits) {
+        if (nbits == 0) return;
+        UInt128 val = value;
+        const uint32_t space = static_cast<uint32_t>(kFlushBits - bit_count_);
+        if (nbits >= space) {
+            const UInt128 mask = (space == 128) ? kAllOnes : ((UInt128(1) << space) - 1);
+            bit_buffer_ |= (val & mask) << bit_count_;
+
+            // Emit 128-bit word.
+            auto& buf = buffer();
+            const size_t base = buf.size();
+            buf.resize(base + kFlushBytes);
+            std::memcpy(buf.data() + base, &bit_buffer_, kFlushBytes);
+
+            // Carry remainder.
+            val >>= space;
+            nbits -= space;
+            bit_buffer_ = 0;
+            bit_count_ = 0;
+        }
+        if (nbits > 0) {
+            bit_buffer_ |= val << bit_count_;
+            bit_count_ += nbits;
+        }
+    }
+
+    size_t finish_into() {
+        const size_t total_bits_val = buffer().size() * 8 + bit_count_;
+        while (bit_count_ > 0) {
+            auto& buf = buffer();
+            buf.push_back(static_cast<uint8_t>(bit_buffer_ & 0xFFu));
+            bit_buffer_ >>= 8;
+            bit_count_ = (bit_count_ >= 8) ? (bit_count_ - 8) : 0;
+        }
+        return total_bits_val;
+    }
+
+    EncodedBlock finish() {
+        const size_t total_bits_val = finish_into();
+        if (external_) {
+            return EncodedBlock{buffer(), total_bits_val}; // copy when external storage
+        }
+        return EncodedBlock{std::move(buffer()), total_bits_val};
+    }
+
+    std::vector<uint8_t> move_buffer() {
+        if (external_) {
+            throw std::runtime_error("BitWriterLSB128: cannot move external buffer");
+        }
+        return std::move(owned_);
+    }
+
+private:
+    using UInt128 = unsigned __int128;
+    static constexpr uint32_t kFlushBits = 128;
+    static constexpr size_t kFlushBytes = kFlushBits / 8;
+    static constexpr UInt128 kAllOnes = ~UInt128(0);
+
+    std::vector<uint8_t>& buffer() { return external_ ? *external_ : owned_; }
+
+    std::vector<uint8_t>* external_ = nullptr;
+    std::vector<uint8_t> owned_;
+    UInt128 bit_buffer_ = 0;
+    uint32_t bit_count_ = 0;
+};
+
+using BitWriterLSBWide = BitWriterLSB128;
+#else
+// Fallback "wide" writer using a 64-bit buffer when __uint128_t is unavailable.
+class BitWriterLSBWide {
+public:
+    BitWriterLSBWide() = default;
+
+    void reset() {
+        buffer_.clear();
+        bit_buffer_ = 0;
+        bit_count_ = 0;
+    }
+
+    void reserve(size_t nbytes) { buffer_.reserve(nbytes); }
+
+    void append_bits(uint32_t value, uint32_t nbits) {
+        if (nbits == 0) return;
+        // Fast path: everything fits without flush.
+        if (bit_count_ + nbits < 64) {
+            bit_buffer_ |= static_cast<uint64_t>(value) << bit_count_;
+            bit_count_ += nbits;
+            return;
+        }
+        // Flush current buffer plus some bits from value.
+        const uint32_t space = 64 - bit_count_;
+        const uint64_t mask = (space == 64) ? ~0ull : ((1ull << space) - 1ull);
+        bit_buffer_ |= (static_cast<uint64_t>(value) & mask) << bit_count_;
+        emit_word(bit_buffer_);
+        bit_buffer_ = static_cast<uint64_t>(value) >> space;
+        bit_count_ = nbits - space;
+    }
+
+    size_t finish_into() {
+        const size_t total_bits_val = buffer_.size() * 8 + bit_count_;
+        if (bit_count_ > 0) {
+            emit_word(bit_buffer_);
+            bit_buffer_ = 0;
+            bit_count_ = 0;
+        }
+        return total_bits_val;
+    }
+
+    EncodedBlock finish() {
+        const size_t total_bits_val = finish_into();
+        EncodedBlock out;
+        out.bytes = std::move(buffer_);
+        out.bit_count = total_bits_val;
+        return out;
+    }
+
+    std::vector<uint8_t> move_buffer() { return std::move(buffer_); }
+
+private:
+    void inline emit_word(uint64_t word) {
+        const size_t base = buffer_.size();
+        buffer_.resize(base + 8);
+        std::memcpy(buffer_.data() + base, &word, 8);
+    }
+
+    std::vector<uint8_t> buffer_;
+    uint64_t bit_buffer_ = 0;
+    uint32_t bit_count_ = 0;
+};
+#endif
 
 // LSB-first reader: consumes bits from a little-endian buffer starting at offset_bits.
 class BitReaderLSB {

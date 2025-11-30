@@ -256,11 +256,13 @@ size_t encode_block_impl_into(const std::vector<uint8_t>& symbols,
 
     for (auto it = symbols.rbegin(); it != symbols.rend(); ++it) {
         const uint8_t s = *it;
+#ifndef NDEBUG
         if (s >= tables.symTT.size()) {
             fprintf(stderr, "FSEEncoderMSB: symbol %u out of range (size %zu)\n",
                     static_cast<unsigned>(s), tables.symTT.size());
             throw std::runtime_error("FSEEncoderMSB: symbol out of range for tables");
         }
+#endif
         const SymTransform& tr = tables.symTT[s];
 
         const uint32_t nb_out = (state + tr.delta_nb_bits) >> 16;
@@ -376,11 +378,11 @@ class FSEEncoderLSB64 : public IFSEEncoder {
 public:
     explicit FSEEncoderLSB64(const FSETables& tables) : tables_(tables) {}
     EncodedBlock encode_block(const std::vector<uint8_t>& symbols) const override {
-        return encode_block_impl<BitWriterLSB64>(symbols, tables_);
+        return encode_block_impl<BitWriterLSBWide>(symbols, tables_);
     }
     size_t encode_block_into(const std::vector<uint8_t>& symbols,
                              std::vector<uint8_t>& out_bytes) const override {
-        BitWriterLSB64 writer;
+        BitWriterLSBWide writer;
         const size_t bit_count = encode_block_impl_into(symbols, tables_, writer);
         out_bytes = writer.move_buffer();
         return bit_count;
