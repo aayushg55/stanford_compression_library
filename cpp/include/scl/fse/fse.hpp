@@ -14,6 +14,9 @@ enum class FSELevel {
     L3_Experimental
 };
 
+// Implementation invariant: table_log is capped to 15 to keep state/new_state_base in 16 bits.
+constexpr uint32_t kMaxTableLog = 15;
+
 // Encoded bitstream with explicit bit length (last byte may be partially used).
 struct EncodedBlock {
     std::vector<uint8_t> bytes;

@@ -17,9 +17,6 @@ extern "C" size_t sclfse_compress_level(const void* src, size_t srcSize, void* d
     opts.use_lsb = cfg.use_lsb;
     opts.use_lsb_wide = cfg.use_lsb_wide;
 
-    fprintf(stderr, "[sclfse] compress level=%d table_log=%u block=%zu lsb=%d wide=%d\n",
-            level, opts.table_log, opts.block_size, (int)opts.use_lsb, (int)opts.use_lsb_wide);
-
     const auto* in = static_cast<const uint8_t*>(src);
     std::vector<uint8_t> input(in, in + srcSize);
     EncodedFrame frame = encode_stream(input, opts);

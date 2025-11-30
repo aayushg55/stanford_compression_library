@@ -678,8 +678,9 @@ static int local_SCLFSE_compress(void* dst, size_t dstSize, const void* src, siz
 }
 
 static int local_SCLFSE_decompress(void* dst, size_t dstSize, const void* src, size_t srcSize) {
-    (void)dstSize;
-    return (int)sclfse_decompress_level(dst, dstSize, src, srcSize, (int)g_scl_level);
+    (void)dstSize; (void)srcSize;
+    /* g_cSize holds the actual compressed size for the current bench case. */
+    return (int)sclfse_decompress_level(dst, dstSize, src, g_cSize, (int)g_scl_level);
 }
 
 static int local_HUF_readStats(void* dst, size_t maxDstSize, const void* src, size_t srcSize)

@@ -63,10 +63,8 @@ FSEParams::FSEParams(const std::vector<uint32_t>& counts_in,
       normalized(counts_in.size(), 0),
       data_block_size_bits(data_block_size_bits_in),
       initial_state(1u << table_log_in) {
-    if (table_log_in > 16) {
-        fprintf(stderr, "[sclfse] FSEParams table_log_in=%u exceeds 16, clamping to 12\n", table_log_in);
-        table_log = 12;
-        throw std::invalid_argument("FSEParams: table_log exceeds 16");
+    if (table_log_in > kMaxTableLog) {
+        throw std::invalid_argument("FSEParams: table_log exceeds kMaxTableLog "); // TODO: add values of input and kMaxTableLog to the error message
     }
     if (counts.empty()) {
         throw std::invalid_argument("FSEParams: counts must not be empty");
@@ -170,9 +168,9 @@ FSETables::FSETables(const FSEParams& params)
       table_size(params.table_size),
       data_block_size_bits(params.data_block_size_bits),
       alphabet_size(params.counts.size()) {
-    if (table_log > 16) {
-        fprintf(stderr, "FSETables: table_log=%u exceeds 16 (counts=%zu)\n",
-                table_log, alphabet_size);
+    if (table_log > kMaxTableLog) {
+        fprintf(stderr, "FSETables: table_log=%u exceeds %u (counts=%zu)\n",
+                table_log, kMaxTableLog, alphabet_size);
         throw std::invalid_argument("FSETables: table_log too large for 16-bit new_state_base");
     }
     const auto& norm = params.normalized;
@@ -300,6 +298,7 @@ FSETables::FSETables(const FSEParams& params)
                 max_bits_out = table_log - floor_log2(freq - 1u);
             }
             const uint32_t min_state_plus = freq << max_bits_out;
+            // Bound: max_bits_out <= table_log <= 15, so delta_nb_bits <= (16 << 16) < 1<<20.
             const uint32_t delta_nb_bits = (max_bits_out << 16) - min_state_plus;
             const int32_t delta_find_state = static_cast<int32_t>(total) -
                                              static_cast<int32_t>(freq);
@@ -325,9 +324,9 @@ size_t encode_block_impl_into(const std::vector<uint8_t>& symbols,
         return writer.finish_into();
     }
 
-    uint32_t state = tables.table_size;
-    std::vector<uint32_t> chunk_vals;
-    std::vector<uint32_t> chunk_bits;
+    uint16_t state = static_cast<uint16_t>(tables.table_size); // state < 2 * table_size (<= 1<<16 when table_log <= 15)
+    std::vector<uint16_t> chunk_vals;   // each payload chunk fits in <= 16 bits
+    std::vector<uint8_t> chunk_bits;    // nb_out <= table_log <= 15
     chunk_vals.reserve(symbols.size());
     chunk_bits.reserve(symbols.size());
 
@@ -341,26 +340,42 @@ size_t encode_block_impl_into(const std::vector<uint8_t>& symbols,
         }
 #endif
         const SymTransform& tr = tables.symTT[s];
-
-        const uint32_t nb_out = (state + tr.delta_nb_bits) >> 16;
-        const uint32_t mask = (nb_out == 32) ? 0xFFFFFFFFu : ((1u << nb_out) - 1u);
-        const uint32_t out_bits_value = state & mask;
+        // With table_log <= 15, state < 1<<16 and delta_nb_bits < (1<<20); sum fits in 32 bits.
+        const uint32_t state_plus_delta = static_cast<uint32_t>(state) + tr.delta_nb_bits;
+        const uint8_t nb_out = static_cast<uint8_t>(state_plus_delta >> 16);
+#ifndef NDEBUG
+        if (nb_out > tables.table_log) {
+            fprintf(stderr, "FSEEncoderMSB: nb_out=%u exceeds table_log=%u\n",
+                    nb_out, tables.table_log);
+            throw std::runtime_error("FSEEncoderMSB: nb_out exceeds table_log");
+        }
+#endif
+        const uint16_t mask = static_cast<uint16_t>((1u << nb_out) - 1u); // <= 0xFFFF
+        const uint16_t out_bits_value = state & mask;
 
         chunk_vals.push_back(out_bits_value);
         chunk_bits.push_back(nb_out);
 
-        const uint32_t subrange_id = state >> nb_out;
-        const uint32_t idx = subrange_id + static_cast<uint32_t>(tr.delta_find_state);
-        state = tables.tableU16[idx];
+        const uint16_t subrange_id = static_cast<uint16_t>(state >> nb_out); // < 2 * table_size <= 1<<16
+        const int32_t idx = static_cast<int32_t>(subrange_id) + tr.delta_find_state; // signed to catch negative delta
+#ifndef NDEBUG
+        if (idx < 0 || static_cast<uint32_t>(idx) >= tables.table_size) {
+            fprintf(stderr, "FSEEncoderMSB: idx=%d out of table_size=%u\n",
+                    idx, tables.table_size);
+            throw std::runtime_error("FSEEncoderMSB: idx out of range");
+        }
+#endif
+        state = tables.tableU16[static_cast<uint16_t>(idx)];
     }
 
     assert(state >= tables.table_size && state < tables.table_size * 2);
     const uint32_t final_state_offset = state - tables.table_size;
     writer.append_bits(final_state_offset, tables.table_log);
 
-    for (auto val_it = chunk_vals.rbegin(), bits_it = chunk_bits.rbegin();
-         val_it != chunk_vals.rend(); ++val_it, ++bits_it) {
-        if (*bits_it) writer.append_bits(*val_it, *bits_it);
+    for (size_t i = chunk_vals.size(); i > 0; --i) {
+        const size_t idx = i - 1;
+        const uint8_t bits = chunk_bits[idx];
+        if (bits) writer.append_bits(chunk_vals[idx], bits);
     }
 
     return writer.finish_into();
