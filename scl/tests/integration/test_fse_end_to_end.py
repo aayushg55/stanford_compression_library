@@ -168,6 +168,16 @@ def test_fse_coding_skewed_distribution(impl, fse_cpp):
     assert decoded == data
 
 
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_fse_sparse_symbol_ids(impl, fse_cpp):
+    """Non-contiguous symbols should roundtrip via dense-ID mapping for C++."""
+    freq = {10: 2, 42: 1, 255: 1}
+    encoder, decoder, normalize = make_codec(impl, freq, 6, fse_cpp)
+    data = normalize([10, 255, 10, 42, 10, 255])
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
+
+
 ########################################
 # Tests with Different Table Sizes
 ########################################
