@@ -46,6 +46,7 @@ from scl.external_compressors.zstd_external import (  # noqa: E402
     ZstdExternalDecoder,
     ZstdExternalEncoder,
 )
+from scl.external_compressors.fse_cpp_wrapper import make_cpp_codec  # noqa: E402
 from scl.utils.test_utils import are_blocks_equal, get_random_data_block  # noqa: E402
 from scl.benchmark.dataset_utils import (  # noqa: E402
     get_frequencies_from_datablock,
@@ -96,6 +97,11 @@ def create_fse_codec(freq: Frequencies, table_log: int = 12):
     """Create FSE encoder/decoder pair."""
     params = FSEParams(freq, TABLE_SIZE_LOG2=table_log)
     return FSEEncoder(params), FSEDecoder(params)
+
+
+def create_fse_cpp_codec(freq: Frequencies, table_log: int = 12):
+    """Create C++ FSE encoder/decoder pair via the pybind wrapper."""
+    return make_cpp_codec(freq, table_log)
 
 
 def create_rans_codec(freq: Frequencies):
@@ -184,6 +190,7 @@ def get_codec_factories(codecs: Optional[List[str]] = None):
 
     codec_map = {
         "fse": (lambda f: create_fse_codec(f, table_log=12), "FSE", None),
+        "fse_cpp": (lambda f: create_fse_cpp_codec(f, table_log=12), "FSE_C++", None),
         "rans": (lambda f: create_rans_codec(f), "rANS", None),
         "tans": (lambda f: create_tans_codec(f), "tANS", None),
         "huffman": (lambda f: create_huffman_codec(f), "Huffman", None),

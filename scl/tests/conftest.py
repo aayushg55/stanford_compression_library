@@ -76,6 +76,7 @@ def fse_cpp():
     """
     try:
         import scl_fse_cpp  # type: ignore
+
         return scl_fse_cpp
     except ImportError:
         pass
@@ -87,6 +88,7 @@ def fse_cpp():
             sys.path.append(str(candidate))
             try:
                 import scl_fse_cpp  # type: ignore
+
                 return scl_fse_cpp
             except ImportError:
                 return None

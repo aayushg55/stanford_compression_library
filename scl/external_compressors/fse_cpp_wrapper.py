@@ -1,18 +1,19 @@
 """
 Wrapper around the C++ FSE pybind module to mirror the Python codec API.
 
-It builds a dense 0..N alphabet from the provided frequencies, maps symbols to
-dense IDs before calling the C++ encoder/decoder, and maps them back on decode.
+Provides separate encoder/decoder classes that share dense-ID mapping and tables,
+so they can plug into existing SCL helpers and benchmarks.
 """
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Union
 
 from bitarray import bitarray
 
 from scl.core.data_block import DataBlock
 from scl.core.prob_dist import Frequencies
+from scl.core.data_encoder_decoder import DataEncoder, DataDecoder
 
 try:
     import scl_fse_cpp  # type: ignore
@@ -35,7 +36,9 @@ else:
     _IMPORT_ERROR = None
 
 
-class FSECppWrapper:
+class _FSECppContext:
+    """Shared state for the C++ encoder/decoder pair (dense mapping + tables)."""
+
     def __init__(self, freqs: Frequencies, table_log: int):
         if scl_fse_cpp is None:
             raise ImportError(
@@ -50,28 +53,57 @@ class FSECppWrapper:
         for sym, c in freqs.freq_dict.items():
             counts_vec[self._sym_to_id[sym]] = c
 
-        # Keep params/tables alive for the encoder/decoder reference lifetimes.
-        self._params = scl_fse_cpp.FSEParams(counts_vec, table_log)
-        self._tables = scl_fse_cpp.FSETables(self._params)
-        self._enc = scl_fse_cpp.FSEEncoder(self._tables)
-        self._dec = scl_fse_cpp.FSEDecoder(self._tables)
+        self.params = scl_fse_cpp.FSEParams(counts_vec, table_log)
+        self.tables = scl_fse_cpp.FSETables(self.params)
+        self.encoder = scl_fse_cpp.FSEEncoder(self.tables)
+        self.decoder = scl_fse_cpp.FSEDecoder(self.tables)
 
-    def encode_block(self, data_block: DataBlock) -> bitarray:
+    def map_symbols(self, data_block: DataBlock) -> List[int]:
         try:
-            mapped: List[int] = [self._sym_to_id[s] for s in data_block.data_list]
+            return [self._sym_to_id[s] for s in data_block.data_list]
         except KeyError as e:
             raise ValueError(f"Symbol {e} not in alphabet") from e
-        encoded = self._enc.encode_block(mapped)
+
+    def ids_to_symbols(self, ids: List[int]) -> List[Any]:
+        return [self._id_to_sym[i] for i in ids]
+
+
+class FSECppEncoder(DataEncoder):
+    """Dense-ID encoder backed by the C++ tables."""
+
+    def __init__(self, ctx: _FSECppContext):
+        self._ctx = ctx
+
+    def encode_block(self, data_block: DataBlock) -> bitarray:
+        mapped = self._ctx.map_symbols(data_block)
+        encoded = self._ctx.encoder.encode_block(mapped)
         bits = bitarray(endian="big")
         bits.frombytes(bytes(encoded.bytes))
         return bits[: encoded.bit_count]
 
+    def reset(self):
+        return None
+
+
+class FSECppDecoder(DataDecoder):
+    """Dense-ID decoder backed by the C++ tables."""
+
+    def __init__(self, ctx: _FSECppContext):
+        self._ctx = ctx
+
     def decode_block(self, encoded_bits: bitarray) -> Tuple[DataBlock, int]:
-        encoded_bytes = list(encoded_bits.tobytes())
-        decoded_ids, bits_consumed = self._dec.decode_block(encoded_bytes)
-        decoded_syms = [self._id_to_sym[i] for i in decoded_ids]
+        decoded_bytes = list(encoded_bits.tobytes())
+        decoded_ids, bits_consumed = self._ctx.decoder.decode_block(decoded_bytes)
+        decoded_syms = self._ctx.ids_to_symbols(decoded_ids)
         return DataBlock(decoded_syms), bits_consumed
 
+    def reset(self):
+        return None
 
-def make_cpp_codec(freq_dict: Dict[Any, int], table_log: int) -> FSECppWrapper:
-    return FSECppWrapper(Frequencies(freq_dict), table_log)
+
+def make_cpp_codec(
+    freq_dict: Union[Dict[Any, int], Frequencies], table_log: int
+) -> Tuple[FSECppEncoder, FSECppDecoder]:
+    freqs = freq_dict if isinstance(freq_dict, Frequencies) else Frequencies(freq_dict)
+    ctx = _FSECppContext(freqs, table_log)
+    return FSECppEncoder(ctx), FSECppDecoder(ctx)

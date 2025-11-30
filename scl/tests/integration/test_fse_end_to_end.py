@@ -3,14 +3,10 @@
 import pytest
 
 from scl.compressors.fse import FSEParams, FSEEncoder, FSEDecoder
-from scl.core.prob_dist import Frequencies, get_avg_neg_log_prob
+from scl.core.prob_dist import Frequencies
 from scl.core.data_block import DataBlock
-from scl.utils.test_utils import (
-    get_random_data_block,
-    try_lossless_compression,
-    lossless_entropy_coder_test,
-)
-from scl.external_compressors.fse_cpp_wrapper import FSECppWrapper
+from scl.utils.test_utils import get_random_data_block, lossless_entropy_coder_test
+from scl.external_compressors.fse_cpp_wrapper import make_cpp_codec
 
 
 def make_codec(impl, freq_dict, table_log, fse_cpp):
@@ -18,14 +14,13 @@ def make_codec(impl, freq_dict, table_log, fse_cpp):
     if impl == "cpp":
         if fse_cpp is None:
             pytest.skip("scl_fse_cpp module not available")
-        # Wrapper builds dense IDs for the C++ tables and maps symbols back.
-        wrapper = FSECppWrapper(Frequencies(freq_dict), table_log)
-        return wrapper, wrapper, lambda seq: list(seq)
+        enc, dec = make_cpp_codec(Frequencies(freq_dict), table_log)
+        return enc, dec, list
 
     params = FSEParams(Frequencies(freq_dict), TABLE_SIZE_LOG2=table_log)
     enc = FSEEncoder(params)
     dec = FSEDecoder(params)
-    return enc, dec, lambda seq: list(seq)
+    return enc, dec, list
 
 
 def roundtrip(enc, dec, data_list, impl):
@@ -37,6 +32,17 @@ def roundtrip(enc, dec, data_list, impl):
     encoded = enc.encode_block(DataBlock(data_list))
     decoded, _ = dec.decode_block(encoded)
     return decoded.data_list
+
+
+def test_python_lossless_entropy_helper():
+    """Reuse shared test utility to sanity check Python codec optimality."""
+    freq = Frequencies({0: 3, 1: 3, 2: 2})
+    params = FSEParams(freq, TABLE_SIZE_LOG2=8)
+    enc = FSEEncoder(params)
+    dec = FSEDecoder(params)
+    lossless_entropy_coder_test(
+        enc, dec, freq, data_size=2000, encoding_optimality_precision=0.2, seed=1
+    )
 
 
 ########################################
@@ -52,20 +58,16 @@ def roundtrip(enc, dec, data_list, impl):
         ({0: 5, 1: 5, 2: 5, 3: 1}, 10),
     ],
 )
-def test_python_roundtrip_larger_blocks(freq_dict, table_log):
-    """Ensure the Python spec stays healthy before exercising the C++ path."""
-    params = FSEParams(Frequencies(freq_dict), TABLE_SIZE_LOG2=table_log)
-    enc = FSEEncoder(params)
-    dec = FSEDecoder(params)
-
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_roundtrip_larger_blocks(impl, freq_dict, table_log, fse_cpp):
+    """Larger block roundtrip sanity for both Python and C++."""
+    encoder, decoder, normalize = make_codec(impl, freq_dict, table_log, fse_cpp)
     prob_dist = Frequencies(freq_dict).get_prob_dist()
     data_block = get_random_data_block(prob_dist, 4000, seed=7)
+    data = normalize(list(data_block.data_list))
 
-    encoded = enc.encode_block(DataBlock(data_block.data_list))
-    decoded, bits_consumed = dec.decode_block(encoded)
-
-    assert bits_consumed == len(encoded)
-    assert decoded.data_list == data_block.data_list
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
 ########################################
