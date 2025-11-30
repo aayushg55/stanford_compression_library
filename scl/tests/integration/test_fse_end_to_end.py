@@ -1,8 +1,6 @@
-"""Integration tests for FSE end-to-end encoding/decoding
+"""Integration tests for FSE end-to-end encoding/decoding."""
 
-Tests full block encoding and decoding with various scenarios.
-Uses test_utils functions for consistency with other codecs.
-"""
+import pytest
 
 from scl.compressors.fse import FSEParams, FSEEncoder, FSEDecoder
 from scl.core.prob_dist import Frequencies, get_avg_neg_log_prob
@@ -14,82 +12,88 @@ from scl.utils.test_utils import (
 )
 
 
+def make_codec(impl, freq_dict, table_log, fse_cpp):
+    if impl == "cpp":
+        if fse_cpp is None:
+            pytest.skip("scl_fse_cpp module not available")
+        counts_vec = [0] * 256
+        for sym, c in freq_dict.items():
+            counts_vec[int(sym)] = c
+        params = fse_cpp.FSEParams(counts_vec, table_log)
+        tables = fse_cpp.FSETables(params)
+        enc = fse_cpp.FSEEncoder(tables)
+        dec = fse_cpp.FSEDecoder(tables)
+        return enc, dec
+
+    params = FSEParams(Frequencies(freq_dict), TABLE_SIZE_LOG2=table_log)
+    return FSEEncoder(params), FSEDecoder(params)
+
+
+def roundtrip(enc, dec, data_list, impl):
+    if impl == "cpp":
+        encoded = enc.encode_block(data_list)
+        decoded, bits = dec.decode_block(encoded.bytes)
+        assert bits == encoded.bit_count
+        return decoded
+    encoded = enc.encode_block(DataBlock(data_list))
+    decoded, _ = dec.decode_block(encoded)
+    return decoded.data_list
+
+
 ########################################
 # Basic End-to-End Tests
 ########################################
 
 
-def test_encode_decode_single_symbol():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_encode_decode_single_symbol(impl, fse_cpp):
     """Test encoding and decoding a single symbol using try_lossless_compression"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=4)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    data = DataBlock(["A"])
-    # Use try_lossless_compression for consistency (uses are_blocks_equal internally)
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless, "FSE encoding/decoding must be lossless"
+    freq = {0: 3, 1: 3, 2: 2}
+    encoder, decoder = make_codec(impl, freq, 4, fse_cpp)
+    data = [0]
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
-def test_encode_decode_two_symbols():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_encode_decode_two_symbols(impl, fse_cpp):
     """Test encoding and decoding two symbols using try_lossless_compression"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=4)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    data = DataBlock(["A", "B"])
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless
+    freq = {0: 3, 1: 3, 2: 2}
+    encoder, decoder = make_codec(impl, freq, 4, fse_cpp)
+    data = [0, 1]
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
-def test_encode_decode_three_symbols():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_encode_decode_three_symbols(impl, fse_cpp):
     """Test encoding and decoding three symbols using try_lossless_compression"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=4)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    data = DataBlock(["A", "C", "B"])
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless
+    freq = {0: 3, 1: 3, 2: 2}
+    encoder, decoder = make_codec(impl, freq, 4, fse_cpp)
+    data = [0, 2, 1]
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
-def test_encode_decode_all_symbols():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_encode_decode_all_symbols(impl, fse_cpp):
     """Test encoding and decoding all symbols individually using try_lossless_compression"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=4)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    # Test with each symbol
-    for s in freq.alphabet:
-        data = DataBlock([s])
-        is_lossless, _, _ = try_lossless_compression(
-            data, encoder, decoder, add_extra_bits_to_encoder_output=True
-        )
-        assert is_lossless
+    freq = {0: 3, 1: 3, 2: 2}
+    encoder, decoder = make_codec(impl, freq, 4, fse_cpp)
+    for s in freq.keys():
+        data = [s]
+        decoded = roundtrip(encoder, decoder, data, impl)
+        assert decoded == data
 
 
-def test_encode_decode_repeated_symbols():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_encode_decode_repeated_symbols(impl, fse_cpp):
     """Test encoding and decoding repeated symbols using try_lossless_compression"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=4)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    data = DataBlock(["A", "A", "A"])
-    is_lossless, _, _ = try_lossless_compression(
-        data, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless
+    freq = {0: 3, 1: 3, 2: 2}
+    encoder, decoder = make_codec(impl, freq, 4, fse_cpp)
+    data = [0, 0, 0]
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
 ########################################
@@ -97,70 +101,52 @@ def test_encode_decode_repeated_symbols():
 ########################################
 
 
-def test_fse_coding_simple_distribution():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_fse_coding_simple_distribution(impl, fse_cpp):
     """Test FSE coding on simple distribution"""
-    freq = Frequencies({"A": 1, "B": 1, "C": 2})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=12)  # Use default table size
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    # Generate random data
-    prob_dist = freq.get_prob_dist()
+    freq = {0: 1, 1: 1, 2: 2}
+    encoder, decoder = make_codec(impl, freq, 12, fse_cpp)
+    prob_dist = Frequencies(freq).get_prob_dist()
     data_block = get_random_data_block(prob_dist, 1000, seed=0)
-
-    # Test lossless compression
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data_block, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless, "FSE encoding/decoding must be lossless"
+    data = list(data_block.data_list)
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
-def test_fse_coding_balanced_distribution():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_fse_coding_balanced_distribution(impl, fse_cpp):
     """Test FSE coding on balanced distribution"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=12)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    prob_dist = freq.get_prob_dist()
+    freq = {0: 3, 1: 3, 2: 2}
+    encoder, decoder = make_codec(impl, freq, 12, fse_cpp)
+    prob_dist = Frequencies(freq).get_prob_dist()
     data_block = get_random_data_block(prob_dist, 1000, seed=0)
-
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data_block, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless
+    data = list(data_block.data_list)
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
-def test_fse_coding_uniform_distribution():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_fse_coding_uniform_distribution(impl, fse_cpp):
     """Test FSE coding on uniform distribution"""
-    freq = Frequencies({"A": 5, "B": 5, "C": 5, "D": 5})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=12)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    prob_dist = freq.get_prob_dist()
+    freq = {0: 5, 1: 5, 2: 5, 3: 5}
+    encoder, decoder = make_codec(impl, freq, 12, fse_cpp)
+    prob_dist = Frequencies(freq).get_prob_dist()
     data_block = get_random_data_block(prob_dist, 1000, seed=0)
-
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data_block, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless
+    data = list(data_block.data_list)
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
-def test_fse_coding_skewed_distribution():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_fse_coding_skewed_distribution(impl, fse_cpp):
     """Test FSE coding on skewed distribution"""
-    freq = Frequencies({"A": 1, "B": 3})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=12)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    prob_dist = freq.get_prob_dist()
+    freq = {0: 1, 1: 3}
+    encoder, decoder = make_codec(impl, freq, 12, fse_cpp)
+    prob_dist = Frequencies(freq).get_prob_dist()
     data_block = get_random_data_block(prob_dist, 1000, seed=0)
-
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data_block, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless
+    data = list(data_block.data_list)
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
 
 ########################################
@@ -168,20 +154,16 @@ def test_fse_coding_skewed_distribution():
 ########################################
 
 
-def test_fse_different_table_sizes():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_fse_different_table_sizes(impl, fse_cpp):
     """Test FSE with different table sizes using try_lossless_compression"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
+    freq = {0: 3, 1: 3, 2: 2}
 
     for table_log in [6, 8, 12]:
-        params = FSEParams(freq, TABLE_SIZE_LOG2=table_log)
-        encoder = FSEEncoder(params)
-        decoder = FSEDecoder(params)
-
-        data = DataBlock(["A", "C", "B", "A", "B", "C"])
-        is_lossless, _, _ = try_lossless_compression(
-            data, encoder, decoder, add_extra_bits_to_encoder_output=True
-        )
-        assert is_lossless
+        encoder, decoder = make_codec(impl, freq, table_log, fse_cpp)
+        data = [0, 2, 1, 0, 1, 2]
+        decoded = roundtrip(encoder, decoder, data, impl)
+        assert decoded == data
 
 
 ########################################
@@ -189,21 +171,16 @@ def test_fse_different_table_sizes():
 ########################################
 
 
-def test_fse_large_block():
+@pytest.mark.parametrize("impl", ["python", "cpp"])
+def test_fse_large_block(impl, fse_cpp):
     """Test FSE with large data block"""
-    freq = Frequencies({"A": 3, "B": 3, "C": 2, "D": 1})
-    params = FSEParams(freq, TABLE_SIZE_LOG2=12)
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    # Generate large block
-    prob_dist = freq.get_prob_dist()
+    freq = {0: 3, 1: 3, 2: 2, 3: 1}
+    encoder, decoder = make_codec(impl, freq, 12, fse_cpp)
+    prob_dist = Frequencies(freq).get_prob_dist()
     data_block = get_random_data_block(prob_dist, 10000, seed=0)
-
-    is_lossless, encode_len, _ = try_lossless_compression(
-        data_block, encoder, decoder, add_extra_bits_to_encoder_output=True
-    )
-    assert is_lossless
+    data = list(data_block.data_list)
+    decoded = roundtrip(encoder, decoder, data, impl)
+    assert decoded == data
 
     # Check compression ratio is reasonable
     avg_codelen = encode_len / data_block.size

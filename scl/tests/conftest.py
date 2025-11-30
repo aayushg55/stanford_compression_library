@@ -12,6 +12,8 @@ from scl.compressors.fse import (
     build_encode_table,
 )
 from scl.core.prob_dist import Frequencies
+import sys
+from pathlib import Path
 
 
 ########################################
@@ -64,6 +66,31 @@ def basic_tables(basic_params):
         "table_log": table_log,
         "table_size": 1 << table_log,
     }
+
+
+@pytest.fixture(scope="session")
+def fse_cpp():
+    """
+    Optional pybind module for the C++ spec implementation.
+    Returns the module if available, otherwise None.
+    """
+    try:
+        import scl_fse_cpp  # type: ignore
+        return scl_fse_cpp
+    except ImportError:
+        pass
+
+    # Try adding cpp/build to sys.path if present anywhere above.
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "cpp" / "build"
+        if candidate.exists():
+            sys.path.append(str(candidate))
+            try:
+                import scl_fse_cpp  # type: ignore
+                return scl_fse_cpp
+            except ImportError:
+                return None
+    return None
 
 
 ########################################

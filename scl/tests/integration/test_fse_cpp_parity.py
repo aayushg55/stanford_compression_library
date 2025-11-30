@@ -1,34 +1,17 @@
 import random
-import sys
-from pathlib import Path
 
 import pytest
 from bitarray import bitarray
-
-# Try to import the built module; fall back to adding cpp/build to sys.path.
-try:
-    import scl_fse_cpp as fsecpp  # type: ignore
-except ImportError:  # pragma: no cover - optional dependency
-    fsecpp = None
-    root = Path(__file__).resolve()
-    for parent in root.parents:
-        candidate = parent / "cpp" / "build"
-        if candidate.exists():
-            sys.path.append(str(candidate))
-            break
-    try:
-        import scl_fse_cpp as fsecpp  # type: ignore  # noqa: F401
-    except ImportError:
-        fsecpp = None
 
 from scl.compressors.fse import FSEEncoder as PyEnc, FSEDecoder as PyDec, FSEParams as PyParams
 from scl.core.data_block import DataBlock
 from scl.core.prob_dist import Frequencies
 
 
-@pytest.mark.skipif(fsecpp is None, reason="scl_fse_cpp module not available")
 @pytest.mark.parametrize("table_log", [6, 8, 10])
-def test_cpp_matches_python_roundtrip(table_log):
+def test_cpp_matches_python_roundtrip(table_log, fse_cpp):
+    if fse_cpp is None:
+        pytest.skip("scl_fse_cpp module not available")
     rng = random.Random(12345)
     alphabet = list(range(4))
     data = [rng.choice(alphabet) for _ in range(512)]
@@ -47,10 +30,10 @@ def test_cpp_matches_python_roundtrip(table_log):
     counts_vec = [0] * 256
     for sym, c in counts.items():
         counts_vec[sym] = c
-    cpp_params = fsecpp.FSEParams(counts_vec, table_log)
-    cpp_tables = fsecpp.FSETables(cpp_params)
-    cpp_enc = fsecpp.FSEEncoder(cpp_tables)
-    cpp_dec = fsecpp.FSEDecoder(cpp_tables)
+    cpp_params = fse_cpp.FSEParams(counts_vec, table_log)
+    cpp_tables = fse_cpp.FSETables(cpp_params)
+    cpp_enc = fse_cpp.FSEEncoder(cpp_tables)
+    cpp_dec = fse_cpp.FSEDecoder(cpp_tables)
 
     cpp_encoded = cpp_enc.encode_block(data)
     cpp_decoded, bits_consumed = cpp_dec.decode_block(cpp_encoded.bytes)
