@@ -33,8 +33,8 @@
 #endif
 
 using scl::fse::EncodedBlock;
-using scl::fse::FSEEncoderSpec;
-using scl::fse::FSEDecoderSpec;
+using scl::fse::FSEEncoderMSB;
+using scl::fse::FSEDecoderMSB;
 using scl::fse::FSEParams;
 using scl::fse::FSETables;
 
@@ -185,16 +185,16 @@ struct FSECodec {
     explicit FSECodec(FSEParams p) : params(std::move(p)) {}
     FSEParams params;
     std::shared_ptr<FSETables> tables;
-    std::unique_ptr<FSEEncoderSpec> encoder;
-    std::unique_ptr<FSEDecoderSpec> decoder;
+    std::unique_ptr<FSEEncoderMSB> encoder;
+    std::unique_ptr<FSEDecoderMSB> decoder;
 };
 
 FSECodec make_fse_codec(const std::vector<uint32_t>& counts, uint32_t table_log, double* table_ms_out) {
     auto t0 = Clock::now();
     FSECodec codec(FSEParams(counts, table_log));
     codec.tables = std::make_shared<FSETables>(codec.params);
-    codec.encoder = std::make_unique<FSEEncoderSpec>(*codec.tables);
-    codec.decoder = std::make_unique<FSEDecoderSpec>(*codec.tables);
+    codec.encoder = std::make_unique<FSEEncoderMSB>(*codec.tables);
+    codec.decoder = std::make_unique<FSEDecoderMSB>(*codec.tables);
     auto t1 = Clock::now();
     if (table_ms_out) {
         *table_ms_out =

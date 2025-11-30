@@ -26,8 +26,8 @@ int main() {
     FSEParams params({counts.begin(), counts.end()}, table_log);
     FSETables tables(params);
 
-    FSEEncoderSpec encoder(tables);
-    FSEDecoderSpec decoder(tables);
+    FSEEncoderMSB encoder(tables);
+    FSEDecoderMSB decoder(tables);
 
     const auto encoded = encoder.encode_block(data);
     const auto decoded = decoder.decode_block(encoded.bytes.data(), encoded.bit_count);

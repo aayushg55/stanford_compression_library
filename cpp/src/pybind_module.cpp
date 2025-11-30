@@ -35,10 +35,10 @@ PYBIND11_MODULE(scl_fse_cpp, m) {
         .def_readonly("bit_count", &EncodedBlock::bit_count);
 
     py::class_<IFSEEncoder>(m, "IFSEEncoder");
-    py::class_<FSEEncoderSpec, IFSEEncoder>(m, "FSEEncoder")
+    py::class_<FSEEncoderMSB, IFSEEncoder>(m, "FSEEncoder")
         .def(py::init<const FSETables&>())
         .def("encode_block",
-             [](const FSEEncoderSpec& enc, const std::vector<uint8_t>& symbols) {
+             [](const FSEEncoderMSB& enc, const std::vector<uint8_t>& symbols) {
                  return enc.encode_block(symbols);
              });
 
@@ -47,10 +47,10 @@ PYBIND11_MODULE(scl_fse_cpp, m) {
         .def_readonly("bits_consumed", &DecodeResult::bits_consumed);
 
     py::class_<IFSEDecoder>(m, "IFSEDecoder");
-    py::class_<FSEDecoderSpec, IFSEDecoder>(m, "FSEDecoder")
+    py::class_<FSEDecoderMSB, IFSEDecoder>(m, "FSEDecoder")
         .def(py::init<const FSETables&>())
         .def("decode_block",
-             [](const FSEDecoderSpec& dec, const std::vector<uint8_t>& bytes) {
+             [](const FSEDecoderMSB& dec, const std::vector<uint8_t>& bytes) {
                  DecodeResult res = dec.decode_block(bytes.data(), bytes.size() * 8);
                  return py::make_tuple(res.symbols, res.bits_consumed);
              });

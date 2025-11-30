@@ -14,32 +14,37 @@ EncodedFrame encode_stream(const std::vector<uint8_t>& input, const FrameOptions
     EncodedFrame frame;
     frame.original_size = input.size();
     const size_t block_size = (opts.block_size == 0) ? input.size() : opts.block_size;
+    std::vector<uint32_t> counts(256, 0);
+    std::vector<uint8_t> symbols;
+    std::vector<uint8_t> payload;
     size_t pos = 0;
     while (pos < input.size()) {
         const size_t chunk = std::min(block_size, input.size() - pos);
-        std::vector<uint32_t> counts(256, 0);
-        for (size_t i = 0; i < chunk; ++i) counts[input[pos + i]]++;
+        std::fill(counts.begin(), counts.end(), 0);
+        for (size_t i = 0; i < chunk; ++i) {
+            counts[input[pos + i]]++;
+        }
 
         FSEParams params(counts, opts.table_log);
         FSETables tables(params);
-        std::vector<uint8_t> symbols(input.begin() + pos, input.begin() + pos + chunk);
+        symbols.assign(input.begin() + pos, input.begin() + pos + chunk);
         auto encoder = make_encoder(opts.level, tables, opts.use_lsb);
-        EncodedBlock encoded = encoder->encode_block(symbols);
+        const size_t bit_count = encoder->encode_block_into(symbols, payload);
 
         uint32_t blk_sz_u32 = static_cast<uint32_t>(chunk);
-        uint32_t bit_count_u32 = static_cast<uint32_t>(encoded.bit_count);
+        uint32_t bit_count_u32 = static_cast<uint32_t>(bit_count);
         uint32_t table_log_u32 = params.table_log;
 
         size_t header_size = sizeof(uint32_t) * (3 + counts.size());
         size_t old_size = frame.bytes.size();
-        frame.bytes.resize(old_size + header_size + encoded.bytes.size());
+        frame.bytes.resize(old_size + header_size + payload.size());
         uint8_t* dst = frame.bytes.data() + old_size;
 
         std::memcpy(dst, &blk_sz_u32, sizeof(uint32_t));
         std::memcpy(dst + sizeof(uint32_t), &bit_count_u32, sizeof(uint32_t));
         std::memcpy(dst + sizeof(uint32_t) * 2, &table_log_u32, sizeof(uint32_t));
         std::memcpy(dst + sizeof(uint32_t) * 3, counts.data(), counts.size() * sizeof(uint32_t));
-        std::memcpy(dst + header_size, encoded.bytes.data(), encoded.bytes.size());
+        std::memcpy(dst + header_size, payload.data(), payload.size());
 
         pos += chunk;
     }

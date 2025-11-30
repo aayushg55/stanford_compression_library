@@ -234,12 +234,18 @@ FSETables::FSETables(const FSEParams& params)
 }
 
 template <class Writer>
-EncodedBlock encode_block_impl(const std::vector<uint8_t>& symbols, const FSETables& tables) {
-    Writer writer;
+size_t encode_block_impl_into(const std::vector<uint8_t>& symbols,
+                              const FSETables& tables,
+                              Writer& writer) {
+    writer.reset();
+    // Rough preallocation: block size bits + table_log bits + payload (~avg).
+    const size_t est_bits = static_cast<size_t>(symbols.size()) * tables.table_log +
+                            tables.data_block_size_bits + tables.table_log;
+    writer.reserve((est_bits + 7) / 8 + 8);
     const uint32_t block_size = static_cast<uint32_t>(symbols.size());
     writer.append_bits(block_size, tables.data_block_size_bits);
     if (symbols.empty()) {
-        return std::move(writer).finish();
+        return writer.finish_into();
     }
 
     uint32_t state = tables.table_size;
@@ -251,9 +257,9 @@ EncodedBlock encode_block_impl(const std::vector<uint8_t>& symbols, const FSETab
     for (auto it = symbols.rbegin(); it != symbols.rend(); ++it) {
         const uint8_t s = *it;
         if (s >= tables.symTT.size()) {
-            fprintf(stderr, "FSEEncoderSpec: symbol %u out of range (size %zu)\n",
+            fprintf(stderr, "FSEEncoderMSB: symbol %u out of range (size %zu)\n",
                     static_cast<unsigned>(s), tables.symTT.size());
-            throw std::runtime_error("FSEEncoderSpec: symbol out of range for tables");
+            throw std::runtime_error("FSEEncoderMSB: symbol out of range for tables");
         }
         const SymTransform& tr = tables.symTT[s];
 
@@ -278,7 +284,17 @@ EncodedBlock encode_block_impl(const std::vector<uint8_t>& symbols, const FSETab
         if (*bits_it) writer.append_bits(*val_it, *bits_it);
     }
 
-    return std::move(writer).finish();
+    return writer.finish_into();
+}
+
+template <class Writer>
+EncodedBlock encode_block_impl(const std::vector<uint8_t>& symbols, const FSETables& tables) {
+    Writer writer;
+    const size_t bit_count = encode_block_impl_into(symbols, tables, writer);
+    EncodedBlock out;
+    out.bytes = writer.move_buffer();
+    out.bit_count = bit_count;
+    return out;
 }
 
 template <class Reader>
@@ -321,17 +337,23 @@ DecodeResult decode_block_impl(const uint8_t* bits,
     return result;
 }
 
-FSEEncoderSpec::FSEEncoderSpec(const FSETables& tables) : tables_(tables) {}
+FSEEncoderMSB::FSEEncoderMSB(const FSETables& tables) : tables_(tables) {}
 
-EncodedBlock FSEEncoderSpec::encode_block(const std::vector<uint8_t>& symbols) const {
+EncodedBlock FSEEncoderMSB::encode_block(const std::vector<uint8_t>& symbols) const {
     return encode_block_impl<BitWriterMSB>(symbols, tables_);
 }
 
-FSEDecoderSpec::FSEDecoderSpec(const FSETables& tables) : tables_(tables) {}
+size_t FSEEncoderMSB::encode_block_into(const std::vector<uint8_t>& symbols,
+                                        std::vector<uint8_t>& out_bytes) const {
+    BitWriterMSB writer(out_bytes);
+    return encode_block_impl_into(symbols, tables_, writer);
+}
 
-DecodeResult FSEDecoderSpec::decode_block(const uint8_t* bits,
-                                          size_t bit_len,
-                                          size_t bit_offset) const {
+FSEDecoderMSB::FSEDecoderMSB(const FSETables& tables) : tables_(tables) {}
+
+DecodeResult FSEDecoderMSB::decode_block(const uint8_t* bits,
+                                         size_t bit_len,
+                                         size_t bit_offset) const {
     return decode_block_impl<BitReaderMSB>(bits, bit_len, bit_offset, tables_);
 }
 
@@ -340,6 +362,11 @@ public:
     explicit FSEEncoderLSB(const FSETables& tables) : tables_(tables) {}
     EncodedBlock encode_block(const std::vector<uint8_t>& symbols) const override {
         return encode_block_impl<BitWriterLSB>(symbols, tables_);
+    }
+    size_t encode_block_into(const std::vector<uint8_t>& symbols,
+                             std::vector<uint8_t>& out_bytes) const override {
+        BitWriterLSB writer(out_bytes);
+        return encode_block_impl_into(symbols, tables_, writer);
     }
 private:
     const FSETables& tables_;
@@ -357,32 +384,38 @@ private:
     const FSETables& tables_;
 };
 
-std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level, const FSETables& tables, bool use_lsb) {
-    if (use_lsb) {
-        return std::make_unique<FSEEncoderLSB>(tables);
-    }
+template <class EncoderT>
+std::unique_ptr<IFSEEncoder> make_encoder_core(FSELevel level, const FSETables& tables) {
     switch (level) {
         case FSELevel::L0_Spec:
         case FSELevel::L1_Clean:
         case FSELevel::L2_Tuned:
         case FSELevel::L3_Experimental:
         default:
-            return std::make_unique<FSEEncoderSpec>(tables);
+            return std::make_unique<EncoderT>(tables);
     }
 }
 
-std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables, bool use_lsb) {
-    if (use_lsb) {
-        return std::make_unique<FSEDecoderLSB>(tables);
-    }
+template <class DecoderT>
+std::unique_ptr<IFSEDecoder> make_decoder_core(FSELevel level, const FSETables& tables) {
     switch (level) {
         case FSELevel::L0_Spec:
         case FSELevel::L1_Clean:
         case FSELevel::L2_Tuned:
         case FSELevel::L3_Experimental:
         default:
-            return std::make_unique<FSEDecoderSpec>(tables);
+            return std::make_unique<DecoderT>(tables);
     }
+}
+
+std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level, const FSETables& tables, bool use_lsb) {
+    return use_lsb ? make_encoder_core<FSEEncoderLSB>(level, tables)
+                   : make_encoder_core<FSEEncoderMSB>(level, tables);
+}
+
+std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables, bool use_lsb) {
+    return use_lsb ? make_decoder_core<FSEDecoderLSB>(level, tables)
+                   : make_decoder_core<FSEDecoderMSB>(level, tables);
 }
 
 } // namespace scl::fse

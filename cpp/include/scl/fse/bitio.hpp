@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <stdexcept>
 #include <vector>
 
 #include "fse.hpp"
@@ -10,6 +11,17 @@ namespace scl::fse {
 // LSB-first bit writer: accumulates bits into a little-endian buffer and flushes bytes.
 class BitWriterLSB {
 public:
+    BitWriterLSB() = default;
+    explicit BitWriterLSB(std::vector<uint8_t>& external) : external_(&external) { reset(); }
+
+    void reset() {
+        buffer().clear();
+        bit_buffer_ = 0;
+        bit_count_ = 0;
+    }
+
+    void reserve(size_t nbytes) { buffer().reserve(nbytes); }
+
     void append_bits(uint32_t value, uint32_t nbits) {
         if (nbits == 0) return;
         // Pack bits into the buffer starting at the current bit offset.
@@ -17,28 +29,44 @@ public:
         bit_count_ += nbits;
         // Flush whole bytes as soon as they are complete; leave partial bits buffered.
         while (bit_count_ >= 8) {
-            bytes_.push_back(static_cast<uint8_t>(bit_buffer_ & 0xFFu)); // low 8 bits
+            buffer().push_back(static_cast<uint8_t>(bit_buffer_ & 0xFFu)); // low 8 bits
             bit_buffer_ >>= 8;
             bit_count_ -= 8;
         }
     }
 
-    EncodedBlock finish() {
-        size_t total_bits_val = bytes_.size() * 8 + bit_count_;
+    // Flush partial byte (if any) and return the total bit length; leaves data in buffer().
+    size_t finish_into() {
+        const size_t total_bits_val = buffer().size() * 8 + bit_count_;
         if (bit_count_ > 0) {
             // Flush remaining partial byte (LSB-aligned).
-            bytes_.push_back(static_cast<uint8_t>(bit_buffer_ & 0xFFu));
+            buffer().push_back(static_cast<uint8_t>(bit_buffer_ & 0xFFu));
             bit_buffer_ = 0;
             bit_count_ = 0;
         }
-        EncodedBlock out;
-        out.bytes = std::move(bytes_);
-        out.bit_count = total_bits_val;
-        return out;
+        return total_bits_val;
+    }
+
+    EncodedBlock finish() {
+        const size_t total_bits_val = finish_into();
+        if (external_) {
+            return EncodedBlock{buffer(), total_bits_val}; // copy when using external storage
+        }
+        return EncodedBlock{std::move(buffer()), total_bits_val};
+    }
+
+    std::vector<uint8_t> move_buffer() {
+        if (external_) {
+            throw std::runtime_error("BitWriterLSB: cannot move external buffer");
+        }
+        return std::move(owned_);
     }
 
 private:
-    std::vector<uint8_t> bytes_;
+    std::vector<uint8_t>& buffer() { return external_ ? *external_ : owned_; }
+
+    std::vector<uint8_t>* external_ = nullptr;
+    std::vector<uint8_t> owned_;
     uint64_t bit_buffer_ = 0;
     uint32_t bit_count_ = 0;
 };
@@ -79,6 +107,16 @@ private:
 // it could be chunked too but use LSB to match the original FSE implementation.
 class BitWriterMSB {
 public:
+    BitWriterMSB() = default;
+    explicit BitWriterMSB(std::vector<uint8_t>& external) : external_(&external) { reset(); }
+
+    void reset() {
+        buffer().clear();
+        bit_len_ = 0;
+    }
+
+    void reserve(size_t nbytes) { buffer().reserve(nbytes); }
+
     void append_bits(uint32_t value, uint32_t nbits) {
         if (nbits == 0) return;
         for (int i = static_cast<int>(nbits) - 1; i >= 0; --i) {
@@ -92,22 +130,39 @@ public:
         }
     }
 
-    EncodedBlock finish() && { return EncodedBlock{std::move(bytes_), bit_len_}; }
+    size_t finish_into() { return bit_len_; }
+
+    EncodedBlock finish() && {
+        if (external_) {
+            return EncodedBlock{buffer(), bit_len_}; // copy when using external storage
+        }
+        return EncodedBlock{std::move(buffer()), bit_len_};
+    }
+
+    std::vector<uint8_t> move_buffer() {
+        if (external_) {
+            throw std::runtime_error("BitWriterMSB: cannot move external buffer");
+        }
+        return std::move(owned_);
+    }
 
 private:
     void append_bit(uint32_t bit) {
         const size_t byte_idx = bit_len_ / 8;
         const size_t bit_in_byte = bit_len_ % 8;
-        if (byte_idx >= bytes_.size()) {
-            bytes_.push_back(0);
+        if (byte_idx >= buffer().size()) {
+            buffer().push_back(0);
         }
         // Place the bit at position (7 - bit_in_byte) so we fill each byte from MSB -> LSB.
         const uint8_t mask = static_cast<uint8_t>(1u << (7u - bit_in_byte));
-        if (bit) bytes_[byte_idx] |= mask;
+        if (bit) buffer()[byte_idx] |= mask;
         ++bit_len_;
     }
 
-    std::vector<uint8_t> bytes_;
+    std::vector<uint8_t>& buffer() { return external_ ? *external_ : owned_; }
+
+    std::vector<uint8_t>* external_ = nullptr;
+    std::vector<uint8_t> owned_;
     size_t bit_len_ = 0;
 };
 

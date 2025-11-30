@@ -59,13 +59,18 @@ struct FSETables {
 struct IFSEEncoder {
     virtual ~IFSEEncoder() = default;
     virtual EncodedBlock encode_block(const std::vector<uint8_t>& symbols) const = 0;
+    // Encode into a caller-provided byte buffer; returns bit length.
+    virtual size_t encode_block_into(const std::vector<uint8_t>& symbols,
+                                     std::vector<uint8_t>& out_bytes) const = 0;
 };
 
-class FSEEncoderSpec : public IFSEEncoder {
+class FSEEncoderMSB : public IFSEEncoder {
 public:
-    explicit FSEEncoderSpec(const FSETables& tables);
+    explicit FSEEncoderMSB(const FSETables& tables);
 
     EncodedBlock encode_block(const std::vector<uint8_t>& symbols) const override;
+    size_t encode_block_into(const std::vector<uint8_t>& symbols,
+                             std::vector<uint8_t>& out_bytes) const override;
 
 private:
     const FSETables& tables_;
@@ -83,9 +88,9 @@ struct IFSEDecoder {
                                       size_t bit_offset = 0) const = 0;
 };
 
-class FSEDecoderSpec : public IFSEDecoder {
+class FSEDecoderMSB : public IFSEDecoder {
 public:
-    explicit FSEDecoderSpec(const FSETables& tables);
+    explicit FSEDecoderMSB(const FSETables& tables);
 
     DecodeResult decode_block(const uint8_t* bits,
                               size_t bit_len,
