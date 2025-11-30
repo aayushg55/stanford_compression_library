@@ -321,6 +321,11 @@ EncodedBlock FSEEncoderSpec::encode_block(const std::vector<uint8_t>& symbols) c
 
     for (auto it = symbols.rbegin(); it != symbols.rend(); ++it) {
         const uint8_t s = *it;
+        if (s >= tables_.symTT.size()) {
+            fprintf(stderr, "FSEEncoderSpec: symbol %u out of range (size %zu)\n",
+                    static_cast<unsigned>(s), tables_.symTT.size());
+            throw std::runtime_error("FSEEncoderSpec: symbol out of range for tables");
+        }
         const SymTransform& tr = tables_.symTT[s];
 
         const uint32_t nb_out = (state + tr.delta_nb_bits) >> 16;

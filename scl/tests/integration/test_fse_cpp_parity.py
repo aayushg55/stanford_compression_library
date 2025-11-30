@@ -16,18 +16,17 @@ def test_cpp_matches_python_roundtrip(table_log, fse_cpp):
     alphabet = list(range(4))
     data = [rng.choice(alphabet) for _ in range(512)]
 
-    # Build Python params/codec
+    # Python codec
     counts = {sym: data.count(sym) for sym in alphabet}
     py_params = PyParams(Frequencies(counts), TABLE_SIZE_LOG2=table_log)
     py_enc = PyEnc(py_params)
     py_dec = PyDec(py_params)
-
     py_encoded = py_enc.encode_block(DataBlock(data))
     py_decoded, _ = py_dec.decode_block(py_encoded)
     assert py_decoded.data_list == data
 
-    # Build C++ params/codec
-    counts_vec = [0] * 256
+    # C++ codec (dense ids already ints)
+    counts_vec = [0] * len(counts)
     for sym, c in counts.items():
         counts_vec[sym] = c
     cpp_params = fse_cpp.FSEParams(counts_vec, table_log)
@@ -40,10 +39,8 @@ def test_cpp_matches_python_roundtrip(table_log, fse_cpp):
     assert cpp_decoded == data
     assert bits_consumed == cpp_encoded.bit_count
 
-    # Bit-for-bit check: align bitarray with emitted bit_count
     cpp_bits = bitarray(endian="big")
     cpp_bits.frombytes(bytes(cpp_encoded.bytes))
     cpp_bits = cpp_bits[: cpp_encoded.bit_count]
     py_bits = py_encoded[: cpp_encoded.bit_count]
-
     assert cpp_bits.tolist() == py_bits.tolist()
