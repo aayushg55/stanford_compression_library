@@ -4,6 +4,8 @@ project(scl_fse_cpp LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# Always emit compile_commands.json unless explicitly overridden.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile_commands.json" FORCE)
 
 option(SCL_FSE_BUILD_EXAMPLE "Build the small FSE example binary" ON)
 option(SCL_FSE_BUILD_PYBIND "Build the pybind11 module" ON)
@@ -14,6 +16,7 @@ option(SCL_FSE_BENCH_LZ4 "Enable lz4 in benchmarks if found" ON)
 
 add_library(scl_fse STATIC
     src/fse.cpp
+    src/frame.cpp
 )
 
 target_include_directories(scl_fse
