@@ -414,10 +414,7 @@ DecodeResult decode_block_impl(const uint8_t* bits,
 
     for (size_t i = 0; i < block_size; ++i) {
         const DecodeEntry& entry = tables.dtable[state];
-        uint32_t bits_val = 0;
-        if (entry.nb_bits > 0) {
-            bits_val = br.read_bits(entry.nb_bits);
-        }
+        uint32_t bits_val = br.read_bits(entry.nb_bits);
         state = entry.new_state_base + bits_val;
         result.symbols[i] = entry.symbol;
     }

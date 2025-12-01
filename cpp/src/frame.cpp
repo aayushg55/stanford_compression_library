@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include <cstdio>
 
 #include "scl/fse/bitio.hpp"
 
@@ -61,20 +62,35 @@ std::vector<uint8_t> decode_stream(const uint8_t* data, size_t size, const Frame
         std::memcpy(&table_log, data + pos + sizeof(uint32_t) * 2, sizeof(uint32_t));
         pos += sizeof(uint32_t) * 3;
         const size_t counts_bytes = 256 * sizeof(uint32_t);
-        if (pos + counts_bytes > size) return {};
+        if (pos + counts_bytes > size) {
+            std::fprintf(stderr,
+                         "[fse-debug] decode_stream: counts overrun pos=%zu size=%zu counts_bytes=%zu\n",
+                         pos, size, counts_bytes);
+            return {};
+        }
         std::vector<uint32_t> counts(256);
         std::memcpy(counts.data(), data + pos, counts_bytes);
         pos += counts_bytes;
 
         const size_t payload_bytes = (bit_count + 7) / 8;
-        if (pos + payload_bytes > size) return {};
+        if (pos + payload_bytes > size) {
+            std::fprintf(stderr,
+                         "[fse-debug] decode_stream: payload overrun pos=%zu size=%zu payload_bytes=%zu bit_count=%u blk_sz=%u\n",
+                         pos, size, payload_bytes, bit_count, blk_sz);
+            return {};
+        }
         const uint8_t* payload = data + pos;
 
         FSEParams params(counts, table_log);
         FSETables tables(params);
         auto decoder = make_decoder(opts.level, tables, opts.use_lsb);
         DecodeResult res = decoder->decode_block(payload, bit_count);
-        if (res.symbols.size() != blk_sz) return {};
+        if (res.symbols.size() != blk_sz) {
+            std::fprintf(stderr,
+                         "[fse-debug] decode_stream: size mismatch decoded=%zu expected=%u bit_count=%u\n",
+                         res.symbols.size(), blk_sz, bit_count);
+            return {};
+        }
         output.insert(output.end(), res.symbols.begin(), res.symbols.end());
         pos += payload_bytes;
     }

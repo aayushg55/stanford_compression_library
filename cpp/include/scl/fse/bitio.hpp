@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cassert>
 #include <cstdint>
 #include <stdexcept>
 #include <cstring>
@@ -8,6 +9,27 @@
 #include "fse.hpp"
 
 namespace scl::fse {
+
+// Mask table for nb_bits in [0, 32]. Payload nb_bits <= table_log <= 15; headers use 32.
+inline constexpr uint32_t kMaskTable[33] = {
+    0x0u,        0x1u,        0x3u,        0x7u,
+    0xFu,        0x1Fu,       0x3Fu,       0x7Fu,
+    0xFFu,       0x1FFu,      0x3FFu,      0x7FFu,
+    0xFFFu,      0x1FFFu,     0x3FFFu,     0x7FFFu,
+    0xFFFFu,     0x1FFFFu,    0x3FFFFu,    0x7FFFFu,
+    0xFFFFFu,    0x1FFFFFu,   0x3FFFFFu,   0x7FFFFFu,
+    0xFFFFFFu,   0x1FFFFFFu,  0x3FFFFFFu,  0x7FFFFFFu,
+    0xFFFFFFFu,  0x1FFFFFFFu, 0x3FFFFFFFu, 0x7FFFFFFFu,
+    0xFFFFFFFFu
+};
+
+// inline constexpr uint32_t mask_for_nbits(uint32_t nbits) {
+//     if (nbits < sizeof(kMaskTable) / sizeof(kMaskTable[0])) {
+//         return kMaskTable[nbits];
+//     }
+//     // Fallback should never fire; keep safe for defensive builds.
+//     return nbits >= 32 ? 0xFFFFFFFFu : ((uint32_t(1) << nbits) - 1u);
+// }
 
 // LSB-first bit writer, parameterized by flush width (8 bits).
 template <size_t FlushBits>
@@ -182,7 +204,7 @@ public:
         }
         // Flush current buffer plus some bits from value.
         const uint32_t space = 64 - bit_count_;
-        const uint64_t mask = (space == 64) ? ~0ull : ((1ull << space) - 1ull);
+        const uint64_t mask = ~0ull >> (64 - space); // when space=64, shift by 0
         bit_buffer_ |= (static_cast<uint64_t>(value) & mask) << bit_count_;
         emit_word(bit_buffer_);
         bit_buffer_ = static_cast<uint64_t>(value) >> space;
@@ -242,7 +264,8 @@ public:
         }
         // Drop bits already consumed in the current byte.
         chunk >>= bit_off;
-        uint32_t mask = (nbits == 32) ? 0xFFFFFFFFu : ((1u << nbits) - 1u);
+        const uint32_t mask = kMaskTable[nbits];
+
         uint32_t val = static_cast<uint32_t>(chunk) & mask;
         bit_pos_ += nbits;
         return val;
@@ -254,6 +277,63 @@ private:
     const uint8_t* data_;
     size_t total_bits_;
     size_t bit_pos_ = 0;
+};
+
+// Buffered LSB-first reader: loads up to 64 bits into a local buffer to reduce per-call overhead.
+class BitReaderLSBBuffered {
+public:
+    BitReaderLSBBuffered(const uint8_t* data, size_t total_bits, size_t offset_bits = 0)
+        : data_(data), total_bits_(total_bits), bit_pos_(offset_bits) {}
+
+    uint32_t read_bits(uint32_t nbits) {
+        if (nbits == 0) return 0;
+        // assert(nbits < 16);
+        uint32_t out = 0;
+        uint32_t out_shift = 0;
+        uint32_t remaining = nbits;
+        while (remaining > 0) {
+            if (bit_count_ == 0) refill();
+            if (bit_count_ == 0) break; // no more bits available
+            const uint32_t take = (remaining < bit_count_) ? remaining : bit_count_;
+            const uint64_t mask = (take == 64) ? ~0ull : ((1ull << take) - 1ull);
+            out |= static_cast<uint32_t>(bit_buffer_ & mask) << out_shift;
+            bit_buffer_ >>= take;
+            bit_count_ -= take;
+            bit_pos_ += take;
+            out_shift += take;
+            remaining -= take;
+        }
+        const uint32_t mask = mask_for_nbits(nbits);
+        return out & mask;
+    }
+
+    size_t position() const { return bit_pos_; }
+
+private:
+    void refill() {
+        if (bit_pos_ >= total_bits_) {
+            bit_count_ = 0;
+            return;
+        }
+        const size_t byte_idx = bit_pos_ / 8;
+        const size_t bit_off = bit_pos_ % 8;
+        const size_t remaining_bits = total_bits_ - bit_pos_;
+        const size_t load_bytes = std::min<size_t>(8, (remaining_bits + 7) / 8);
+
+        uint64_t chunk = 0;
+        std::memcpy(&chunk, data_ + byte_idx, load_bytes);
+        chunk >>= bit_off;
+
+        bit_buffer_ = chunk;
+        const size_t avail_bits = std::min<size_t>(64 - bit_off, remaining_bits);
+        bit_count_ = static_cast<uint32_t>(avail_bits);
+    }
+
+    const uint8_t* data_;
+    size_t total_bits_;
+    size_t bit_pos_;
+    uint64_t bit_buffer_ = 0;
+    uint32_t bit_count_ = 0;
 };
 
 // MSB-first bit IO (matches spec). This path is inherently slower than the LSB buffer
