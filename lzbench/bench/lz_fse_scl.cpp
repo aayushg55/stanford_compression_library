@@ -63,14 +63,7 @@ char* lzbench_fse_init(size_t, size_t level_in, size_t) {
     auto ctx = new (std::nothrow) FSEBenchCtx();
     if (!ctx) return nullptr;
     ctx->config = cfg;
-    // std::fprintf(stderr,
-    //              "[fse-debug] init level_in=%zu -> level=%d table_log=%u block_size=%zu lsb=%d wide=%d\n",
-    //              level_in,
-    //              static_cast<int>(cfg.level),
-    //              cfg.table_log,
-    //              cfg.block_size,
-    //              cfg.use_lsb,
-    //              cfg.use_lsb_wide);
+
     return reinterpret_cast<char*>(ctx);
 }
 

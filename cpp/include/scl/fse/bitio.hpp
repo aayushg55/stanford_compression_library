@@ -23,13 +23,13 @@ inline constexpr uint32_t kMaskTable[33] = {
     0xFFFFFFFFu
 };
 
-// inline constexpr uint32_t mask_for_nbits(uint32_t nbits) {
-//     if (nbits < sizeof(kMaskTable) / sizeof(kMaskTable[0])) {
-//         return kMaskTable[nbits];
-//     }
-//     // Fallback should never fire; keep safe for defensive builds.
-//     return nbits >= 32 ? 0xFFFFFFFFu : ((uint32_t(1) << nbits) - 1u);
-// }
+inline constexpr uint32_t mask_for_nbits(uint32_t nbits) {
+    if (nbits < sizeof(kMaskTable) / sizeof(kMaskTable[0])) {
+        return kMaskTable[nbits];
+    }
+    // Fallback should never fire; keep safe for defensive builds.
+    return nbits >= 32 ? 0xFFFFFFFFu : ((uint32_t(1) << nbits) - 1u);
+}
 
 // LSB-first bit writer, parameterized by flush width (8 bits).
 template <size_t FlushBits>
@@ -247,37 +247,330 @@ private:
 };
 #endif
 
-// LSB-first reader: consumes bits from a little-endian buffer starting at offset_bits.
+
+
+// class BitReaderLSB {
+//     public:
+//         BitReaderLSB(const uint8_t* data,
+//                      size_t /*total_bits*/,
+//                      size_t offset_bits = 0)
+//             : data_(data),
+//               bit_pos_(offset_bits) {}
+    
+//         // Precondition: 1 <= nbits <= 15, buffer padded with >=7 trailing zero bytes.
+//         inline uint32_t read_bits(uint32_t nbits) {
+//             // Optional in non-hot builds:
+//             // assert(nbits > 0 && nbits <= 15);
+    
+//             const size_t   byte_idx = bit_pos_ >> 3;   // / 8
+//             const uint32_t bit_off  = bit_pos_ & 7u;   // % 8
+    
+//             uint32_t w;
+//             std::memcpy(&w, data_ + byte_idx, 4);
+
+//             uint32_t val = static_cast<uint32_t>(w >> bit_off) & kMaskTable[nbits];
+//             bit_pos_ += nbits;
+//             return val;
+//         }
+    
+//         size_t position() const { return bit_pos_; }
+    
+//     private:
+//         const uint8_t* data_;
+//         size_t bit_pos_;
+//     };
+
+// class BitReaderLSB {
+//     public:
+//         BitReaderLSB(const uint8_t* data, size_t total_bits, size_t offset_bits = 0)
+//             : data_(data),
+//               total_bits_(total_bits),
+//               total_bytes_((total_bits + 7) / 8),
+//               bit_pos_(offset_bits) {}
+    
+//         uint32_t read_bits(uint32_t nbits) {
+//             // nbits in [0, 15]
+//             if (nbits == 0) return 0;
+    
+//             // Optional safety check:
+//             // if (bit_pos_ + nbits > total_bits_) { /* handle error */ }
+    
+//             const size_t  byte_idx = bit_pos_ >> 3;     // bit_pos / 8
+//             const uint32_t bit_off = bit_pos_ & 7u;    // bit_pos % 8
+    
+//             // Build a 24-bit little-endian window safely near the end.
+//             uint32_t w = load24_tail_safe(data_, total_bytes_, byte_idx);
+    
+//             // Shift down to our bit position and mask.
+//             uint32_t val = (w >> bit_off) & kMaskTable[nbits];
+    
+//             bit_pos_ += nbits;
+//             return val;
+//         }
+    
+//         size_t position() const { return bit_pos_; }
+    
+//     private:
+//         static inline uint32_t load24_tail_safe(const uint8_t* data,
+//                                                 size_t total_bytes,
+//                                                 size_t byte_idx)
+//         {
+//             // Fast path: we have at least 3 bytes left.
+//             // if (byte_idx + 3 <= total_bytes) {
+//             // This compiles down to 3 loads and a couple shifts.
+//             uint32_t w = 0;
+//             std::memcpy(&w, data + byte_idx, 4);
+//             return w;
+//             // return  (uint32_t)data[byte_idx]
+//             //         | (uint32_t)data[byte_idx + 1] << 8
+//             //         | (uint32_t)data[byte_idx + 2] << 16;
+//             // }
+    
+//             // // Tail: fewer than 3 bytes remain; zero-pad.
+//             // uint32_t v = 0;
+//             // if (byte_idx < total_bytes) {
+//             //     v |= (uint32_t)data[byte_idx];
+//             //     if (byte_idx + 1 < total_bytes)
+//             //         v |= (uint32_t)data[byte_idx + 1] << 8;
+//             //     // If there were 3 bytes, we'd have hit the fast path.
+//             // }
+//             // return v;
+//         }
+    
+//         const uint8_t* data_;
+//         size_t total_bits_;
+//         size_t total_bytes_;
+//         size_t bit_pos_;
+//     };
+
+// class BitReaderLSB {
+//     public:
+//         BitReaderLSB(const uint8_t* data, size_t total_bits, size_t offset_bits = 0)
+//             : data_(data),
+//               total_bits_(total_bits),
+//               bit_pos_(offset_bits),
+//               cached_base_byte_(SIZE_MAX),   // “invalid”
+//               cached_word_(0) {}
+    
+//         uint32_t read_bits(uint32_t nbits) {
+//             if (nbits == 0) return 0;
+    
+//             // Optional bounds check here.
+    
+//             const size_t byte_idx = bit_pos_ >> 3; // /8
+//             const uint32_t bit_off = static_cast<uint32_t>(bit_pos_ & 7u); // %8
+    
+//             // Reload cached window if we've moved out of it
+//             if (byte_idx < cached_base_byte_ ||
+//                 byte_idx >= cached_base_byte_ + 8) {
+//                 // align start to 8-byte boundary for nicer loads
+//                 cached_base_byte_ = byte_idx & ~size_t(7);
+//                 cached_word_ = load64_le(data_ + cached_base_byte_);
+//             }
+    
+//             const size_t bit_base = cached_base_byte_ << 3;
+//             uint64_t val = cached_word_ >> (bit_pos_ - bit_base);
+    
+//             if ((bit_pos_ - bit_base) + nbits > 64) {
+//                 // Crosses into the next 64-bit word, need one extra load
+//                 uint64_t w1 = load64_le(data_ + cached_base_byte_ + 8);
+//                 val |= w1 << (64 - (bit_pos_ - bit_base));
+//             }
+    
+//             bit_pos_ += nbits;
+    
+//             const uint32_t mask = kMaskTable[nbits];
+//             return static_cast<uint32_t>(val) & mask;
+//         }
+    
+//         size_t position() const { return bit_pos_; }
+    
+//     private:
+//         static inline uint64_t load64_le(const uint8_t* p) {
+//             uint64_t v;
+//             std::memcpy(&v, p, sizeof(v));  // safe unaligned
+//         #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+//             v = __builtin_bswap64(v);
+//         #endif
+//             return v;
+//         }
+    
+//         const uint8_t* data_;
+//         size_t total_bits_;
+//         size_t bit_pos_;
+    
+//         size_t   cached_base_byte_;
+//         uint64_t cached_word_;
+//     };
+
 class BitReaderLSB {
-public:
-    BitReaderLSB(const uint8_t* data, size_t total_bits, size_t offset_bits = 0)
-        : data_(data), total_bits_(total_bits), bit_pos_(offset_bits) {}
-
-    uint32_t read_bits(uint32_t nbits) {
-        if (nbits == 0) return 0;
-        size_t byte_idx = bit_pos_ / 8;
-        uint32_t bit_off = static_cast<uint32_t>(bit_pos_ % 8);
-        uint64_t chunk = 0;
-        // Read up to 8 bytes into a 64-bit chunk.
-        for (uint32_t i = 0; i < 8 && (byte_idx + i) < (total_bits_ + 7) / 8; ++i) {
-            chunk |= static_cast<uint64_t>(data_[byte_idx + i]) << (8 * i);
+    public:
+        BitReaderLSB(const uint8_t* data, size_t total_bits, size_t offset_bits = 0)
+            : data_(data),
+              total_bits_(total_bits),
+              bit_pos_(offset_bits) {}
+    
+        // assume nbits <= 32 here; if you need more we can extend
+        uint32_t read_bits(uint32_t nbits) {
+            if (nbits == 0) return 0;
+    
+            // Optional: bounds check
+            // if (bit_pos_ + nbits > total_bits_) { /* handle error */ }
+    
+            const size_t byte_idx = bit_pos_ >> 3;         // bit_pos_ / 8
+            const uint32_t bit_off = bit_pos_ & 7u;        // bit_pos_ % 8
+    
+            // Load first 64 bits from the stream, little-endian, possibly unaligned
+            uint64_t word0 = load64_le(data_ + byte_idx);
+    
+            // Shift down by the bit offset
+            uint64_t val = word0 >> bit_off;
+    
+            // // If the request straddles the 64-bit boundary, grab the next word
+            // if (bit_off + nbits > 64) {
+            //     uint64_t word1 = load64_le(data_ + byte_idx + 8);
+            //     val |= (word1 << (64 - bit_off));
+            // }
+    
+            bit_pos_ += nbits;
+            const uint32_t mask = kMaskTable[nbits];
+            return static_cast<uint32_t>(val) & mask;
         }
-        // Drop bits already consumed in the current byte.
-        chunk >>= bit_off;
-        const uint32_t mask = kMaskTable[nbits];
+    
+        size_t position() const { return bit_pos_; }
+    
+    private:
+        static inline uint64_t load64_le(const uint8_t* p) {
+            uint64_t v;
+            std::memcpy(&v, p, sizeof(v));
+    #if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            v = __builtin_bswap64(v);
+    #endif
+            return v;
+        }
+    
+        const uint8_t* data_;
+        size_t total_bits_;
+        size_t bit_pos_;  // current absolute bit position
+    };
 
-        uint32_t val = static_cast<uint32_t>(chunk) & mask;
-        bit_pos_ += nbits;
-        return val;
-    }
+// LSB-first reader: consumes bits from a little-endian buffer starting at offset_bits.
+// class BitReaderLSB {
+// public:
+//     BitReaderLSB(const uint8_t* data, size_t total_bits, size_t offset_bits = 0)
+//         : data_(data),
+//           end_(data + ((total_bits + 7) / 8)),
+//           total_bits_(total_bits),
+//           bit_pos_(offset_bits),
+//           ptr_(data + (offset_bits / 8)) {
+//         const uint32_t bit_off = static_cast<uint32_t>(offset_bits % 8);
+//         if (bit_off != 0 && ptr_ < end_) {
+//             // Prime the container with the tail of the first byte.
+//             lo_ = static_cast<uint64_t>(*ptr_ >> bit_off);
+//             bits_in_lo_ = 8u - bit_off;
+//             ++ptr_;
+//         }
+//     }
 
-    size_t position() const { return bit_pos_; }
+//     uint32_t read_bits(uint32_t nbits) {
+//         if (nbits == 0) return 0;
+//         ensure(nbits);
+//         const uint32_t mask = kMaskTable[nbits];
+//         const uint32_t val = static_cast<uint32_t>(lo_) & mask;
+//         consume(nbits);
+//         bit_pos_ += nbits;
+//         return val;
+//     }
 
-private:
-    const uint8_t* data_;
-    size_t total_bits_;
-    size_t bit_pos_ = 0;
-};
+//     size_t position() const { return bit_pos_; }
+
+// private:
+//     void ensure(uint32_t nbits) {
+//         if ((bits_in_lo_ + bits_in_hi_) >= nbits) return;
+//         if (ptr_ >= end_) return;
+
+//         // First chunk.
+//         uint64_t chunk = 0;
+//         size_t avail = static_cast<size_t>(end_ - ptr_);
+//         size_t load = std::min<size_t>(8, avail);
+//         std::memcpy(&chunk, ptr_, load);
+//         append_chunk(chunk, static_cast<uint32_t>(load * 8));
+//         ptr_ += load;
+
+//         // // Optional second chunk if still short and bytes remain.
+//         // if ((bits_in_lo_ + bits_in_hi_) < nbits && ptr_ < end_) {
+//         //     chunk = 0;
+//         //     avail = static_cast<size_t>(end_ - ptr_);
+//         //     load = std::min<size_t>(8, avail);
+//         //     std::memcpy(&chunk, ptr_, load);
+//         //     append_chunk(chunk, static_cast<uint32_t>(load * 8));
+//         //     ptr_ += load;
+//         // }
+//     }
+
+//     inline void append_chunk(uint64_t chunk, uint32_t chunk_bits) {
+//         // Place chunk after existing bits in the 128-bit window (hi_:lo_).
+//         const uint32_t total_bits = bits_in_lo_ + bits_in_hi_;
+//         if (total_bits == 0) {
+//             lo_ = chunk;
+//             bits_in_lo_ = chunk_bits;
+//             return;
+//         }
+//         if (bits_in_lo_ < 64) {
+//             const uint32_t space_lo = 64u - bits_in_lo_;
+//             if (chunk_bits <= space_lo) {
+//                 lo_ |= chunk << bits_in_lo_;
+//                 bits_in_lo_ += chunk_bits;
+//                 return;
+//             }
+//             // Fill lo_ and spill remainder into hi_.
+//             lo_ |= chunk << bits_in_lo_;
+//             const uint32_t spill = chunk_bits - space_lo;
+//             if (spill < 64) {
+//                 hi_ |= chunk >> space_lo;
+//             } else {
+//                 hi_ = chunk >> space_lo; // spill can only be up to 64 here
+//             }
+//             bits_in_lo_ = 64;
+//             bits_in_hi_ += spill;
+//             return;
+//         }
+//         // lo_ full: append into hi_.
+//         const uint32_t space_hi = 64u - bits_in_hi_;
+//         const uint32_t take = (chunk_bits < space_hi) ? chunk_bits : space_hi;
+//         hi_ |= chunk << bits_in_hi_;
+//         bits_in_hi_ += take;
+//     }
+
+//     inline void consume(uint32_t nbits) {
+//         if (nbits == 0) return;
+//         if (nbits < bits_in_lo_) {
+//             lo_ >>= nbits;
+//             bits_in_lo_ -= nbits;
+//             return;
+//         }
+//         // Drop lo_ entirely and pull from hi_ if needed.
+//         const uint32_t remaining = nbits - bits_in_lo_;
+//         lo_ = hi_;
+//         hi_ = 0;
+//         bits_in_lo_ = bits_in_hi_;
+//         bits_in_hi_ = 0;
+//         if (remaining) {
+//             lo_ >>= remaining;
+//             bits_in_lo_ = (bits_in_lo_ > remaining) ? (bits_in_lo_ - remaining) : 0;
+//         }
+//     }
+
+//     const uint8_t* data_;
+//     const uint8_t* end_;
+//     const uint8_t* ptr_;
+//     size_t total_bits_;
+//     size_t bit_pos_ = 0;
+//     uint64_t lo_ = 0;
+//     uint64_t hi_ = 0;
+//     uint32_t bits_in_lo_ = 0;
+//     uint32_t bits_in_hi_ = 0;
+// };
 
 // Buffered LSB-first reader: loads up to 64 bits into a local buffer to reduce per-call overhead.
 class BitReaderLSBBuffered {
