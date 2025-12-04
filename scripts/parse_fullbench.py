@@ -42,6 +42,7 @@ def parse_metrics(raw_path: Path, block_size: int) -> Dict[str, Dict[str, Dict[s
         "scl_fse_1_compress": ("scl_fse_1", 0),
         "scl_fse_2_compress": ("scl_fse_2", 0),
         "scl_fse_4_compress": ("scl_fse_4", 0),
+        "scl_fse_5_compress": ("scl_fse_5", 0),
     }
 
     # Decompress mapping with preference scores: higher wins; ties broken by faster MB/s.
@@ -67,6 +68,7 @@ def parse_metrics(raw_path: Path, block_size: int) -> Dict[str, Dict[str, Dict[s
         "scl_fse_1_decompress": ("scl_fse_1", 0),
         "scl_fse_2_decompress": ("scl_fse_2", 0),
         "scl_fse_4_decompress": ("scl_fse_4", 0),
+        "scl_fse_5_decompress": ("scl_fse_5", 0),
     }
 
     metrics: Dict[str, Dict[str, Dict[str, float]]] = {}
@@ -125,6 +127,7 @@ def format_tables(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "scl_fse_1",
         "scl_fse_2",
         "scl_fse_4",
+        "scl_fse_5",
     ]
     pretty = {
         "HUF": "HUF",
@@ -135,6 +138,7 @@ def format_tables(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "scl_fse_1": "scl_fse_1",
         "scl_fse_2": "scl_fse_2",
         "scl_fse_4": "scl_fse_4",
+        "scl_fse_5": "scl_fse_5",
     }
 
     lines: List[str] = []
@@ -164,6 +168,7 @@ def format_plain(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "scl_fse_1",
         "scl_fse_2",
         "scl_fse_4",
+        "scl_fse_5",
     ]
     pretty = {
         "HUF": "HUF",
@@ -174,6 +179,7 @@ def format_plain(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "scl_fse_1": "scl_fse_1",
         "scl_fse_2": "scl_fse_2",
         "scl_fse_4": "scl_fse_4",
+        "scl_fse_5": "scl_fse_5",
     }
     lines: List[str] = []
     for proba in sorted(metrics.keys(), key=lambda x: float(x)):

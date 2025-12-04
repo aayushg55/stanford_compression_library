@@ -35,7 +35,7 @@ extern "C" size_t sclfse_decompress_level(void* dst, size_t dstCapacity, const v
     opts.level = cfg.level;
     opts.use_lsb = cfg.use_lsb;
     opts.use_lsb_wide = cfg.use_lsb_wide;
-
+    opts.use_lsb_reader = cfg.use_lsb_reader;
     std::vector<uint8_t> decoded = decode_stream(static_cast<const uint8_t*>(src), srcSize, opts);
     if (decoded.empty() || decoded.size() > dstCapacity) {
         return 0;

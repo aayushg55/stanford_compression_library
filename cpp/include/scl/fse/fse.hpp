@@ -112,6 +112,8 @@ std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level,
                                           const FSETables& tables,
                                           bool use_lsb = false,
                                           bool use_lsb_wide = false);
-std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables, bool use_lsb = false);
+std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level,
+                                          const FSETables& tables,
+                                          bool use_lsb_reader = false);
 
 } // namespace scl::fse

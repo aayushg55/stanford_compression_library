@@ -13,6 +13,7 @@ struct FrameOptions {
     FSELevel level = FSELevel::L0_Spec;
     bool use_lsb = false;
     bool use_lsb_wide = false;     // use 64-bit chunked LSB writer
+    bool use_lsb_reader = false;   // choose LSB bit reader for decode
 };
 
 struct EncodedFrame {

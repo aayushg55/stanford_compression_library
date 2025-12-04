@@ -67,6 +67,7 @@ PYBIND11_MODULE(scl_fse_cpp, m) {
               fo.level = cfg.level;
               fo.use_lsb = cfg.use_lsb;
               fo.use_lsb_wide = cfg.use_lsb_wide;
+              fo.use_lsb_reader = cfg.use_lsb_reader;
               std::string buf = src;
               std::vector<uint8_t> input(buf.begin(), buf.end());
               EncodedFrame frame = encode_stream(input, fo);
@@ -83,6 +84,7 @@ PYBIND11_MODULE(scl_fse_cpp, m) {
               fo.level = cfg.level;
               fo.use_lsb = cfg.use_lsb;
               fo.use_lsb_wide = cfg.use_lsb_wide;
+              fo.use_lsb_reader = cfg.use_lsb_reader;
               std::string buf = src;
               std::vector<uint8_t> decoded = decode_stream(reinterpret_cast<const uint8_t*>(buf.data()),
                                                            buf.size(), fo);

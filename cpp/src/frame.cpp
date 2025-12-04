@@ -83,7 +83,7 @@ std::vector<uint8_t> decode_stream(const uint8_t* data, size_t size, const Frame
 
         FSEParams params(counts, table_log);
         FSETables tables(params);
-        auto decoder = make_decoder(opts.level, tables, opts.use_lsb);
+        auto decoder = make_decoder(opts.level, tables, opts.use_lsb_reader);
         DecodeResult res = decoder->decode_block(payload, bit_count);
         if (res.symbols.size() != blk_sz) {
             std::fprintf(stderr,

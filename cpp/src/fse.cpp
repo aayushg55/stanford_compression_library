@@ -12,8 +12,9 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-
+#include <iostream>
 #include "scl/fse/bitio.hpp"
+
 
 namespace scl::fse {
 
@@ -529,9 +530,11 @@ std::unique_ptr<IFSEEncoder> make_encoder(FSELevel level,
     return make_encoder_core<FSEEncoderLSB>(level, tables);
 }
 
-std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level, const FSETables& tables, bool use_lsb) {
-    return use_lsb ? make_decoder_core<FSEDecoderLSB>(level, tables)
-                   : make_decoder_core<FSEDecoderMSB>(level, tables);
+std::unique_ptr<IFSEDecoder> make_decoder(FSELevel level,
+                                          const FSETables& tables,
+                                          bool use_lsb_reader) {
+    return use_lsb_reader ? make_decoder_core<FSEDecoderLSB>(level, tables)
+                          : make_decoder_core<FSEDecoderMSB>(level, tables);
 }
 
 } // namespace scl::fse
