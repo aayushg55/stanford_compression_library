@@ -1,0 +1,232 @@
+\documentclass{article}
+
+% ready for submission
+\usepackage{neurips_2024}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{amsmath}        % math environments and \text
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+
+\title{Efficient FSE: A Pedagogical Implementation and Performance Analysis of Finite State Entropy}
+
+\author{%
+  Aayush Gupta \\
+  Department of Electrical Engineering \\
+  Stanford University \\
+  Stanford, CA 94305 \\
+  \texttt{aayushg55@stanford.edu} \\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Finite State Entropy (FSE) is a table-based realization of Asymmetric Numeral Systems (ANS) that achieves compression ratios comparable to arithmetic coding with speeds closer to Huffman coding. This project implements FSE in two stages: first as a clear, pedagogical Python reference within the Stanford Compression Library (SCL), then as an optimized C++ port with incremental performance improvements. The implementations maintain bitstream compatibility and are integrated with standard benchmarking tools (fullbench, lzbench) for fair comparison against production codecs. Results show the Python implementation matches other ANS variants in compression ratio while being faster than rANS/tANS but slower than Huffman. The C++ port achieves approximately 20$\times$ speedup over Python with additional 2--5$\times$ gains from optimized bit I/O, though it remains approximately 2.5$\times$ slower than Yann Collet's reference FSE implementation. This work provides a readable reference implementation and demonstrates how careful engineering bridges the gap between theoretical algorithms and production-grade performance.
+\end{abstract}
+
+\section{Introduction}
+
+Modern lossless compressors combine an LZ-style front end with a fast entropy coder that converts symbol streams to bits at rates close to the Shannon limit. Classical entropy coders face a fundamental trade-off: Huffman coding is extremely fast but restricted to integer code lengths, while arithmetic or range coding achieves near-optimal rates but is traditionally slower and more complex.
+
+Finite State Entropy (FSE), used in Zstandard, is a table-based realization of Asymmetric Numeral Systems (ANS) that addresses this trade-off. Instead of maintaining an interval (as in arithmetic coding) or emitting per-symbol codewords (as in Huffman), ANS keeps a single integer ``state'' that jointly encodes the past bitstream and the next symbol to be decoded. FSE pushes the arithmetic operations into precomputed tables, so each encoding or decoding step reduces to a table lookup, a few bit operations, and an addition, giving compression ratios comparable to arithmetic coding with speeds closer to Huffman.
+
+This project aims to reimplement and analyze FSE in a pedagogical setting. The goals are threefold: (1) implement a pure-Python FSE encoder/decoder as a readable, well-documented reference; (2) port the implementation to C++ and incrementally add low-level optimizations to understand how ANS moves from theory to production-grade code; and (3) evaluate both versions quantitatively against existing entropy coders and production libraries.
+
+\section{Literature Review}
+
+\subsection{Asymmetric Numeral Systems}
+
+Jarek Duda's work on ANS [1] shows how to match arithmetic coding's compression efficiency using a single integer ``state'' instead of maintaining an interval. In ANS, encoder and decoder share a mapping between symbols and ranges of states; the probability of a symbol is reflected in how many state values are assigned to it.
+
+There are two main practical realizations: range-based ANS (rANS), which behaves much like range coding and uses integer multiplications and reciprocal-based divisions in its inner loop, and table-based ANS (tANS). tANS pushes that arithmetic into precomputed tables so that each encoding or decoding step reduces to a table lookup, a few bit operations, and an addition.
+
+\subsection{Finite State Entropy}
+
+Yann Collet's Finite State Entropy (FSE) is a practical tANS variant engineered for speed [2]. The core construction involves:
+
+\begin{enumerate}
+\item \textbf{Normalization:} Symbol counts are normalized so their sum is a power of two, $2^{\texttt{tableLog}}$.
+\item \textbf{Spreading:} Symbols are ``spread'' across the state space using a co-prime step so their occupancy matches the normalized weights.
+\item \textbf{Decode table:} Each entry stores $(\texttt{symbol}, \texttt{nbBits}, \texttt{newStateBase})$, where $\texttt{nbBits}$ is state-dependent.
+\item \textbf{Encode tables:} A shared next-state table plus per-symbol transforms $(\texttt{deltaNbBits}, \texttt{deltaFindState})$ that reproduce state transitions in reverse.
+\end{enumerate}
+
+Decoding a symbol consists of a single table lookup, outputting the symbol, reading $\texttt{nbBits}$ from the bitstream, and adding those bits to the stored base to form the next state. Encoding runs this process in reverse: starting from a final state, it processes the message backwards, flushes low bits as needed, and uses the shared state table plus per-symbol transforms to update the state.
+
+The number of bits consumed for each symbol is tied to its probability: the decoder reads either $k$ or $k+1$ bits, arranged so that the average bits per symbol matches the symbol's optimal Shannon code length.
+
+\subsection{Related Work}
+
+The FiniteStateEntropy GitHub repository [3] provides Collet's optimized C implementation of FSE. Internally, it includes routines that normalize raw counts to signed ``normalized counters,'' build encoder and decoder tables, and compress data using precomputed tables. These structures serve as a concrete target for performance comparison.
+
+Zstandard (zstd) [4] is a widely used lossless compressor that combines an LZ front end with a fast entropy stage based on Huffman (Huff0) and FSE. Within SCL [5], there are already several pure-Python entropy coders—Huffman, rANS, tANS, arithmetic—as well as wrappers around external libraries such as zlib and Zstandard, providing both reference implementations and baselines for compression ratio and throughput.
+
+\section{Methods}
+
+\subsection{Python Reference Implementation}
+
+The Python implementation is built within the Stanford Compression Library (SCL) as a clear, pedagogical reference. It integrates with SCL's existing \texttt{DataEncoder}/\texttt{DataDecoder} interfaces and uses \texttt{Frequencies} and \texttt{DataBlock} for modeling.
+
+The implementation includes:
+\begin{itemize}
+\item \textbf{Normalization:} Proportional scaling of symbol counts to a power-of-two table size ($2^{\texttt{tableLog}}$), with a fix-up step to ensure the sum is exact.
+\item \textbf{FSE spread:} Co-prime step algorithm to distribute symbols across the state space according to normalized frequencies.
+\item \textbf{Decode table:} Per-state entries $(\texttt{symbol}, \texttt{nbBits}, \texttt{newStateBase})$ where $\texttt{nbBits}$ is state-dependent.
+\item \textbf{Encode tables:} Shared \texttt{tableU16} (next-state mapping) plus per-symbol \texttt{symbolTT} transforms $(\texttt{deltaNbBits}, \texttt{deltaFindState})$.
+\end{itemize}
+
+The block format is: $[\texttt{block\_size} (32 \text{ bits})][\texttt{final\_state\_offset} (\texttt{tableLog} \text{ bits})][\texttt{payload bits}]$, using big-endian bits per byte to match Python's \texttt{bitarray} library.
+
+A comprehensive test suite verifies normalization, spreading, table construction, and end-to-end encode/decode correctness. The implementation maintains bitstream compatibility between Python and C++ versions, enabling validation through round-trip testing.
+
+\subsection{C++ Implementation}
+
+The C++ port mirrors the Python bitstream for compatibility. The implementation includes:
+
+\begin{itemize}
+\item \textbf{Core library:} Static library \texttt{libscl\_fse.a} with FSE table construction, normalization, spreading, and encoder/decoder implementations.
+\item \textbf{Bit I/O:} Both MSB and LSB readers/writers, with optimized LSB bitreader for improved decode performance.
+\item \textbf{Framing:} Multi-block \texttt{encode\_stream}/\texttt{decode\_stream} utilities for handling larger inputs.
+\item \textbf{Pybind11 bindings:} Exposes C++ FSE to Python for parity testing, allowing reuse of existing Python test infrastructure.
+\end{itemize}
+
+The C++ implementation maintains bitstream compatibility with the Python version, enabling direct comparison and validation.
+
+\subsection{Benchmarking Setup}
+
+Evaluation uses three benchmarking approaches:
+
+\begin{enumerate}
+\item \textbf{Python benchmarks:} Custom harness comparing FSE against other SCL codecs (rANS, tANS, Huffman) and external codecs (zlib, zstd) on standard datasets.
+\item \textbf{fullbench integration:} Added this codec to Yann Collet's \texttt{fullbench} for entropy-only comparison against upstream FSE/Huff0/zlibh.
+\item \textbf{lzbench integration:} Thin shim registering this codec with \texttt{lzbench} for full pipeline comparison against zstd/zlib/lz4.
+        \end{enumerate}
+
+Datasets include the Canterbury and Silesia corpora (text, binaries, images) treated as byte streams, plus synthetic distributions. Metrics reported are compression ratio (bits per byte) and encode/decode throughput (MB/s).
+
+\section{Results and Analysis}
+
+\subsection{Python Implementation}
+
+On synthetic small-alphabet distributions, FSE matches other ANS variants (rANS, tANS) in compression ratio. Performance-wise, FSE is slower than the pure-Python Huffman coder but faster than the existing pure-Python rANS and tANS implementations. This aligns with expectations: FSE's table-based approach avoids the multiplication/division overhead of rANS while being more complex than Huffman's simple codeword lookup.
+
+On files from standard datasets, the zlib and zstd wrappers are orders of magnitude faster than any pure-Python implementation and often achieve slightly better compression ratios, as expected from optimized C libraries.
+
+\subsection{C++ Implementation}
+
+The C++ port achieves significant performance improvements:
+
+    \begin{itemize}
+\item \textbf{Python to C++:} Approximately 20$\times$ speedup from the language transition alone.
+\item \textbf{Bit I/O optimization:} Additional 2--5$\times$ speedup from optimized LSB bitreader implementation.
+\item \textbf{Performance gap:} Still approximately 2.5$\times$ slower than Yann Collet's reference FSE implementation, indicating room for further optimization.
+    \end{itemize}
+
+In entropy-only comparisons via \texttt{fullbench}, this implementation achieves compression ratios comparable to upstream FSE/Huff0 while demonstrating the performance gap that remains. The gap likely stems from:
+    \begin{itemize}
+\item Per-block header overhead (raw histogram counts, ~1KB per block)
+\item Table rebuild overhead on small blocks
+\item Single-state decode (no interleaving/instruction-level parallelism)
+\item Bit I/O overhead despite optimizations
+    \end{itemize}
+
+In full pipeline comparisons via \texttt{lzbench}, this FSE implementation trails zstd/zlib/lz4 significantly in both throughput and compression ratio, as expected since those codecs add powerful LZ front ends to already optimized entropy stages.
+
+\subsection{Compression Ratio Analysis}
+
+FSE achieves compression ratios very close to arithmetic coding and other ANS variants, confirming the theoretical expectation that ANS can match arithmetic coding's efficiency. The ratio is consistently better than Huffman coding on non-uniform distributions, as FSE can achieve fractional bits per symbol while Huffman is restricted to integer code lengths.
+
+\section{Conclusions}
+
+This project successfully implements FSE in both Python and C++, providing a readable reference implementation and demonstrating the performance gains achievable through careful engineering. The Python implementation serves as a clear pedagogical reference that matches other ANS variants in compression behavior. The C++ port achieves substantial speedups while maintaining bitstream compatibility, though it highlights the gap between a clean implementation and production-grade optimization.
+
+\subsection{Limitations}
+
+Several limitations remain:
+    \begin{itemize}
+\item Per-block headers are large (raw histogram counts), suggesting NCount compression would improve ratios on small blocks.
+\item Single-state decode limits instruction-level parallelism; interleaved multi-state decode could improve throughput.
+\item Bit I/O, while optimized, remains a bottleneck.
+\item No adaptive table size selection based on input characteristics.
+    \end{itemize}
+    
+\subsection{Future Work}
+
+Potential improvements include:
+    \begin{itemize}
+\item NCount compression for compact block headers
+\item Interleaved multi-state decode for better instruction-level parallelism
+\item Further bit I/O optimizations (chunked word-wise operations)
+\item Adaptive table size selection
+\item Better handling of low-frequency symbols
+    \end{itemize}
+
+\section*{Acknowledgments}
+
+I thank Pulkit and Shubham for their mentorship throughout this project, and the EE274 teaching staff for guidance and feedback.
+
+\begin{ack}
+This work was completed as part of EE274: Data Compression at Stanford University, Autumn 2025.
+\end{ack}
+
+\section*{References}
+
+{
+\small
+
+[1] J. Duda. Asymmetric numeral systems: entropy coding combining speed of Huffman coding with compression rate of arithmetic coding. \textit{arXiv preprint arXiv:1311.2540}, 2013. \url{https://arxiv.org/abs/1311.2540}
+
+[2] Y. Collet. Finite State Entropy – a new breed of entropy coder and follow-up posts. \textit{Fast Compression Blog}. \url{https://fastcompression.blogspot.com}
+
+[3] Y. Collet. FiniteStateEntropy library (FSE). \textit{GitHub}. \url{https://github.com/Cyan4973/FiniteStateEntropy}
+
+[4] Y. Collet et al. Zstandard compression format and source code. \textit{GitHub}. \url{https://github.com/facebook/zstd}
+
+[5] Stanford Compression Library (SCL). Documentation and entropy coder implementations. \textit{GitHub}. \url{https://github.com/stanfordcompression/stanford_compression_library}
+
+}
+
+\appendix
+
+\section{Implementation Details}
+
+\subsection{Code Repository}
+
+The complete implementation is available at:
+\url{https://github.com/aayushg55/stanford_compression_library}
+
+The codebase includes Python and C++ implementations with comprehensive test suites and integrations with standard benchmarking tools (\texttt{fullbench}, \texttt{lzbench}).
+
+\subsection{Current Optimizations}
+
+The C++ implementation currently includes:
+    \begin{itemize}
+\item Optimized LSB bitreader for improved decode performance
+\item Multi-block framing for handling larger inputs
+\item MSB/LSB encoder/decoder variants
+\item Pybind11 bindings for Python integration and testing
+    \end{itemize}
+
+\subsection{Planned Extensions}
+
+Several optimizations are in progress or planned to further close the performance gap with production FSE implementations:
+
+    \begin{itemize}
+\item \textbf{NCount compression:} Per-block headers currently store raw histogram counts (~1KB per block). Compressing these headers using normalized counter encoding would significantly improve compression ratios, especially on small blocks.
+\item \textbf{Interleaved multi-state decode:} Current implementation uses single-state decode, limiting instruction-level parallelism. Interleaving multiple FSE states could improve decode throughput.
+\item \textbf{Chunked bit I/O:} Further bit I/O optimizations using word-wise chunked operations could reduce overhead in the hot decode path.
+\item \textbf{Adaptive table size selection:} Dynamically choosing \texttt{tableLog} based on input characteristics could improve compression ratio vs. speed trade-offs.
+\item \textbf{Low-frequency symbol handling:} Specialized handling for symbols with very low frequencies could improve both compression ratio and speed.
+    \end{itemize}
+
+These extensions would be evaluated using the same benchmarking infrastructure, measuring their individual and combined impact on compression ratio and throughput.
+
+\end{document}
