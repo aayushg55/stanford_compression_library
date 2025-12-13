@@ -11,7 +11,7 @@ These tests verify state transitions and bit output:
 """
 
 import pytest
-from scl.compressors.fse import FSEParams, FSEEncoder, FSEDecoder, SimpleBitReader
+from scl.compressors.fse import FSEParams, FSEEncoder, FSEDecoder, BitReader
 from scl.core.prob_dist import Frequencies
 from scl.utils.bitarray_utils import BitArray
 from tests.conftest import TEST_FREQUENCIES, TEST_TABLE_LOGS
@@ -143,7 +143,7 @@ def test_decode_symbol_state_transitions(freq_dict, table_log, description):
 
     # Enough bits for multiple decodes; exact bit pattern not important here
     bits = BitArray("1" * (max_nb_bits * 20))
-    bitreader = SimpleBitReader(bits)
+    bitreader = BitReader(bits)
 
     for state in range(0, min(8, table_size)):
         try:
@@ -172,7 +172,7 @@ def test_decode_symbol_all_states(freq_dict, table_log, description):
     table_size = params.TABLE_SIZE
     max_nb_bits = table_log
     bits = BitArray("1" * (max_nb_bits * table_size))
-    bitreader = SimpleBitReader(bits)
+    bitreader = BitReader(bits)
 
     # Exercise a prefix of all possible decode states
     for state in range(0, min(table_size, 16)):
@@ -239,7 +239,7 @@ def test_decode_symbol_single_symbol():
 
     table_size = params.TABLE_SIZE
     bits = BitArray("1111")
-    bitreader = SimpleBitReader(bits)
+    bitreader = BitReader(bits)
 
     state = 0  # any decode state in [0, table_size)
     s, new_state = decoder.decode_symbol(state, bitreader)
@@ -271,7 +271,7 @@ def test_decode_symbol_different_table_sizes(table_log):
     table_size = params.TABLE_SIZE
     max_nb_bits = table_log
     bits = BitArray("1" * (max_nb_bits * 2))
-    bitreader = SimpleBitReader(bits)
+    bitreader = BitReader(bits)
 
     state = 0
     s, new_state = decoder.decode_symbol(state, bitreader)
@@ -299,7 +299,7 @@ def test_decode_symbol_extreme_states(basic_decoder, basic_params, basic_freq):
     """Decoding from extreme decode states must stay in [0, TABLE_SIZE)."""
     table_size = basic_params.TABLE_SIZE
     bits = BitArray("11111111")
-    bitreader = SimpleBitReader(bits)
+    bitreader = BitReader(bits)
 
     # Minimum decode state
     state_min = 0
@@ -309,7 +309,7 @@ def test_decode_symbol_extreme_states(basic_decoder, basic_params, basic_freq):
 
     # Maximum decode state
     state_max = table_size - 1
-    bitreader2 = SimpleBitReader(bits)
+    bitreader2 = BitReader(bits)
     s, new_state = basic_decoder.decode_symbol(state_max, bitreader2)
     assert s in basic_freq.alphabet
     assert 0 <= new_state < table_size

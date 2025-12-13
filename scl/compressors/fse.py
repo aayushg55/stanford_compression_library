@@ -14,8 +14,7 @@ from scl.utils.bitarray_utils import (
     bitarray_to_uint,
 )
 from scl.core.data_block import DataBlock
-from scl.core.prob_dist import Frequencies, get_avg_neg_log_prob
-from scl.utils.test_utils import get_random_data_block, try_lossless_compression
+from scl.core.prob_dist import Frequencies
 
 
 def floor_log2(x: int) -> int:
@@ -59,19 +58,16 @@ class FSEParams:
     TABLE_SIZE_LOG2: int = 12
 
     def __post_init__(self):
-        """Compute derived parameters"""
-        # Table size (must be power of 2)
+        # Table size must be power of 2 for FSE state space
         self.TABLE_SIZE = 1 << self.TABLE_SIZE_LOG2
 
-        # Normalize frequencies to table size
+        # Normalize frequencies to table size (sum must equal TABLE_SIZE exactly)
         self.normalized_freqs = self._normalize_frequencies()
-
-        # Verify normalization
         assert (
             sum(self.normalized_freqs.values()) == self.TABLE_SIZE
         ), f"Normalized frequencies must sum to {self.TABLE_SIZE}"
 
-        # Initial state = table_size (FSE convention)
+        # Initial encoder state = table_size (FSE convention: encoder state in [table_size, 2*table_size))
         self.INITIAL_STATE = self.TABLE_SIZE
 
     def _normalize_frequencies(self) -> Dict[Any, int]:
@@ -85,7 +81,7 @@ class FSEParams:
         if total == 0:
             raise ValueError("empty distribution")
 
-        # Initial proportional allocation
+        # Initial proportional allocation: scale each frequency proportionally
         norm = {}
         allocated = 0
 
@@ -95,17 +91,15 @@ class FSEParams:
                 norm[s] = 0
                 continue
 
-            # Simple proportion (floating point is fine in Python)
             x = c * table_size / total
             n = max(1, int(round(x)))
             norm[s] = n
             allocated += n
 
-        # Fix rounding so sum(norm) == table_size
+        # Fix rounding errors: adjust frequencies to sum exactly to table_size
         diff = table_size - allocated
-
         if diff != 0:
-            # Sort symbols by original frequency descending
+            # Sort by frequency (descending) to prioritize high-frequency symbols
             sorted_syms = sorted(
                 self.freqs.alphabet, key=lambda s: self.freqs.frequency(s), reverse=True
             )
@@ -122,17 +116,18 @@ class FSEParams:
         return norm
 
 
-class SimpleBitReader:
-    """Simple bit reader for decoding"""
+class BitReader:
+    """Bit reader for decoding"""
 
     def __init__(self, bits: BitArray):
         self.bits = bits
         self.pos = 0  # bit position from left
 
     def read_bits(self, n: int) -> int:
-        """Read n bits from current position"""
+        """Read n bits from current position (MSB-first, left to right)"""
         if n == 0:
             return 0
+        # Read bits starting at pos, convert to integer (MSB-first)
         v = bitarray_to_uint(self.bits[self.pos : self.pos + n])
         self.pos += n
         return v
@@ -154,11 +149,10 @@ def build_spread_table(norm_freq: Dict[Any, int], table_log: int) -> List[Any]:
     table_size = 1 << table_log
     table_mask = table_size - 1
     spread = [None] * table_size
-
-    # FSE step formula (must be odd, co-prime with table_size)
+    # FSE step formula: ensures step is odd and co-prime with table_size
     step = (table_size >> 1) + (table_size >> 3) + 3
 
-    # Build list of all symbols with their frequencies
+    # Build list of symbols, each appearing according to its normalized frequency
     syms = []
     for s, freq in norm_freq.items():
         syms.extend([s] * freq)
@@ -166,15 +160,13 @@ def build_spread_table(norm_freq: Dict[Any, int], table_log: int) -> List[Any]:
     # Use FSE spread algorithm: place symbols using step pattern
     pos = 0
     for s in syms:
-        # Find next empty position using step pattern
         start_pos = pos
         attempts = 0
         while spread[pos] is not None:
-            pos = (pos + step) & table_mask
+            pos = (pos + step) & table_mask  # Wrap around using mask
             attempts += 1
-            # Safety check: if we've cycled through all positions, find any empty one
             if attempts >= table_size or pos == start_pos:
-                # Fallback: find any empty position
+                # Fallback: find any empty position if step pattern fails
                 found = False
                 for i in range(table_size):
                     if spread[i] is None:
@@ -187,7 +179,6 @@ def build_spread_table(norm_freq: Dict[Any, int], table_log: int) -> List[Any]:
                     raise ValueError(f"Cannot find empty position for symbol {s}")
                 break
         else:
-            # Found empty position via step pattern
             spread[pos] = s
             pos = (pos + step) & table_mask
 
@@ -215,16 +206,18 @@ def build_decode_table(
     """
     table_size = 1 << table_log
     D = [None] * table_size
-
-    # Track next encoder state for each symbol, starting at normalized frequency
+    # Track next encoder state for each symbol (starts at normalized frequency)
     symbol_next = {s: norm_freq[s] for s in norm_freq}
 
     for u in range(table_size):
         s = spread[u]
-        next_state_enc = symbol_next[s]  # Encoder state in [table_size, 2*table_size)
+        # Encoder state is in [table_size, 2*table_size)
+        next_state_enc = symbol_next[s]
         symbol_next[s] += 1
 
+        # Compute nb_bits: number of bits to read, chosen so average matches Shannon code length
         nb_bits = table_log - floor_log2(next_state_enc)
+        # Compute base for new decoder state (decoder state is in [0, table_size))
         new_state_base = (next_state_enc << nb_bits) - table_size
 
         assert (
@@ -262,28 +255,32 @@ def build_encode_table(
         acc += norm_freq[s]
     assert acc == table_size
 
-    # Build tableU16: next-state table
-    # Stores states in [table_size, 2*table_size) range
+    # Build tableU16: maps subrange_id to next encoder state (in [table_size, 2*table_size))
     tableU16 = [0] * table_size
     local_cumul = cumul.copy()
     for u, s in enumerate(spread):
-        tableU16[local_cumul[s]] = table_size + u
+        tableU16[local_cumul[s]] = (
+            table_size + u
+        )  # Encoder state = table_size + decoder state
         local_cumul[s] += 1
 
-    # Build symbol transforms (delta_nb_bits, delta_find_state)
+    # Build symbolTT: per-symbol transforms for encoding
     symbolTT = {}
     total = 0
     for s in symbols:
         freq = norm_freq[s]
         if freq == 0:
+            # Special case: zero-frequency symbol
             delta_nb_bits = ((table_log + 1) << 16) - (1 << table_log)
             symbolTT[s] = SymTransform(delta_nb_bits, 0)
             continue
 
-        # Compute symbol transform parameters
+        # Compute max bits output for this symbol
         max_bits_out = table_log - floor_log2(freq - 1)
         min_state_plus = freq << max_bits_out
+        # delta_nb_bits encodes both max_bits_out (high 16 bits) and min_state_plus (low 16 bits)
         delta_nb_bits = (max_bits_out << 16) - min_state_plus
+        # delta_find_state: offset to find the symbol's subrange in tableU16
         delta_find_state = total - freq
         total += freq
 
@@ -293,39 +290,23 @@ def build_encode_table(
 
 
 class FSEEncoder(DataEncoder):
-    """FSE Encoder
-
-    Encodes symbols using a table-based approach where the number of output bits
-    varies based on the current state and symbol frequency.
-    """
+    """FSE Encoder"""
 
     def __init__(self, fse_params: FSEParams):
-        """Initialize FSE encoder
-
-        Args:
-            fse_params (FSEParams): FSE parameters
-        """
         self.params = fse_params
         self.table_log = fse_params.TABLE_SIZE_LOG2
         self.table_size = fse_params.TABLE_SIZE
         self.DATA_BLOCK_SIZE_BITS = fse_params.DATA_BLOCK_SIZE_BITS
 
-        # Build FSE tables
         norm_freq = fse_params.normalized_freqs
-
-        # Build spread table
         self.spread_table = build_spread_table(norm_freq, self.table_log)
-
-        # Build decode table (needed for verification, encoder uses encode tables)
         self.DTable = build_decode_table(self.spread_table, norm_freq, self.table_log)
-
-        # Build encode tables
         self.tableU16, self.symbolTT = build_encode_table(
             self.spread_table, norm_freq, self.table_log
         )
 
     def encode_symbol(self, state: int, s: Any) -> Tuple[int, int, int]:
-        """Encode one symbol using FSE algorithm
+        """Encode one symbol
 
         Args:
             state: Current state (in [table_size, 2*table_size))
@@ -335,37 +316,26 @@ class FSEEncoder(DataEncoder):
             (new_state, nb_bits_out, out_bits_value)
         """
         tt = self.symbolTT[s]
-
+        # Extract number of bits to output
         nb_out = (state + tt.delta_nb_bits) >> 16
-
-        # Write out lowest nb_out bits of state
+        # Extract low nb_out bits from state to output
         out_mask = (1 << nb_out) - 1
         out_bits_value = state & out_mask
-
-        # Compute subrange ID and next state
+        # Compute subrange_id and look up next state
         subrange_id = state >> nb_out
         new_state = self.tableU16[subrange_id + tt.delta_find_state]
-
         return new_state, nb_out, out_bits_value
 
     def encode_block(self, data_block: DataBlock) -> BitArray:
-        """Encode a block of data
-
-        Args:
-            data_block: Input data block
-
-        Returns:
-            Encoded bitarray
-        """
+        """Encode a block of data"""
         symbols = list(data_block.data_list)
         block_size = len(symbols)
 
         # Handle empty block: still encode block size (0)
         if not symbols:
-            block_size_bits = uint_to_bitarray(0, bit_width=self.DATA_BLOCK_SIZE_BITS)
-            return block_size_bits
+            return uint_to_bitarray(0, bit_width=self.DATA_BLOCK_SIZE_BITS)
 
-        # Initialize state to table_size
+        # FSE encodes in reverse order (last symbol first)
         state = self.table_size
 
         # Encode from last symbol to first (reverse order)
@@ -373,16 +343,16 @@ class FSEEncoder(DataEncoder):
         for s in reversed(symbols):
             state, nb_out, out_bits_value = self.encode_symbol(state, s)
             if nb_out > 0:
-                # Prepend bits (since we're encoding in reverse)
+                # Prepend bits since we're encoding backwards
                 bits = uint_to_bitarray(out_bits_value, bit_width=nb_out) + bits
 
-        # Prepend final state
-        # State is in [table_size, 2*table_size), so we encode (state - table_size) with table_log bits
+        # Store final state offset (encoder state is in [table_size, 2*table_size))
+        # Offset is in [0, table_size), encoded with table_log bits
         state_offset = state - self.table_size
         final_state_bits = uint_to_bitarray(state_offset, bit_width=self.table_log)
         bits = final_state_bits + bits
 
-        # Prepend block size
+        # Prepend block size header (encoded with DATA_BLOCK_SIZE_BITS)
         block_size_bits = uint_to_bitarray(
             block_size, bit_width=self.DATA_BLOCK_SIZE_BITS
         )
@@ -399,55 +369,30 @@ class FSEDecoder(DataDecoder):
     """
 
     def __init__(self, fse_params: FSEParams):
-        """Initialize FSE decoder
-
-        Args:
-            fse_params (FSEParams): FSE parameters (must match encoder)
-        """
+        """Initialize FSE decoder with parameters"""
         self.params = fse_params
         self.table_log = fse_params.TABLE_SIZE_LOG2
         self.table_size = fse_params.TABLE_SIZE
         self.DATA_BLOCK_SIZE_BITS = fse_params.DATA_BLOCK_SIZE_BITS
 
-        # Build FSE tables (same as encoder)
         norm_freq = fse_params.normalized_freqs
-
-        # Build spread table
         self.spread_table = build_spread_table(norm_freq, self.table_log)
-
-        # Build decode table
         self.DTable = build_decode_table(self.spread_table, norm_freq, self.table_log)
 
-    def decode_symbol(self, state: int, bitreader: SimpleBitReader) -> Tuple[Any, int]:
-        """Decode one symbol using FSE algorithm
-
-        Args:
-            state: Current state (in [table_size, 2*table_size))
-            bitreader: Bit reader for reading bits from stream
-
-        Returns:
-            (symbol, new_state)
-        """
-        # DTable is indexed by state in [0, table_size)
-        entry = self.DTable[state]
+    def decode_symbol(self, state: int, bitreader: BitReader) -> Tuple[Any, int]:
+        """Decode one symbol: lookup in decode table, read bits, compute next state"""
+        entry = self.DTable[state]  # Decoder state is in [0, table_size)
         s = entry.symbol
-        nb = entry.nb_bits
+        nb = entry.nb_bits  # Number of bits to read (variable, depends on state)
         bits = bitreader.read_bits(nb)
+        # Next state = base + read bits (both in [0, table_size))
         new_state = entry.new_state_base + bits
         return s, new_state
 
     def decode_block(self, encoded_bitarray: BitArray) -> Tuple[DataBlock, int]:
-        """Decode a block of data
-
-        Args:
-            encoded_bitarray: Encoded bitarray
-
-        Returns:
-            (decoded_block, num_bits_consumed)
-        """
+        """Decode a block of data"""
         num_bits_consumed = 0
 
-        # Handle empty block
         if len(encoded_bitarray) < self.DATA_BLOCK_SIZE_BITS:
             return DataBlock([]), 0
 
@@ -458,23 +403,20 @@ class FSEDecoder(DataDecoder):
         )
         num_bits_consumed += self.DATA_BLOCK_SIZE_BITS
 
-        # Handle empty block
         if block_size == 0:
             return DataBlock([]), num_bits_consumed
 
-        # Read final state (encoded as offset from table_size in encoder)
-        # Encoder state is in [table_size, 2*table_size), encoded as offset in [0, table_size)
-        # Decoder state is in [0, table_size), so we use the offset directly
+        # Read final state offset (decoder state is in [0, table_size))
+        # Offset was encoded with table_log bits, decoder uses it directly as initial state
         final_state_bits = encoded_bitarray[
             num_bits_consumed : num_bits_consumed + self.table_log
         ]
         state_offset = bitarray_to_uint(final_state_bits)
-        # Decode state is the offset directly (encoder state - table_size)
-        state = state_offset
+        state = state_offset  # Decoder starts at this state (encoder started at table_size, offset 0)
         num_bits_consumed += self.table_log
 
         # Set up bit reader for remaining bits
-        bitreader = SimpleBitReader(encoded_bitarray[num_bits_consumed:])
+        bitreader = BitReader(encoded_bitarray[num_bits_consumed:])
 
         # Decode forward
         # When we encode in reverse order, the bits are written in reverse
@@ -485,75 +427,7 @@ class FSEDecoder(DataDecoder):
             s, state = self.decode_symbol(state, bitreader)
             result.append(s)
 
-        # Verify final state
-        # Encoder starts at table_size (offset 0), so decoder should end at state 0
+        # Verify we end at state 0 (encoder started at table_size, offset 0)
         assert state == 0, f"Final decode state {state} != initial decode state 0"
-
         num_bits_consumed += bitreader.pos
         return DataBlock(result), num_bits_consumed
-
-
-######################################## TESTS ##########################################
-
-
-def test_fse_basic():
-    freq = Frequencies({"A": 3, "B": 3, "C": 2})
-    data = DataBlock(["A", "C", "B"])
-    # Use default TABLE_SIZE_LOG2=12 (4096 states) unless testing with smaller table
-    params = FSEParams(freq, DATA_BLOCK_SIZE_BITS=5, TABLE_SIZE_LOG2=4)
-
-    encoder = FSEEncoder(params)
-    decoder = FSEDecoder(params)
-
-    encoded = encoder.encode_block(data)
-    decoded, num_bits = decoder.decode_block(encoded)
-
-    assert decoded.data_list == data.data_list
-    print("Basic FSE test passed!")
-
-
-def test_fse_coding():
-    freqs_list = [
-        Frequencies({"A": 1, "B": 1, "C": 2}),
-        Frequencies({"A": 3, "B": 3, "C": 2}),
-        Frequencies({"A": 5, "B": 5, "C": 5, "D": 5}),
-        Frequencies({"A": 1, "B": 3}),
-    ]
-
-    params_list = [
-        FSEParams(freqs_list[0], TABLE_SIZE_LOG2=12),
-        FSEParams(freqs_list[1], TABLE_SIZE_LOG2=12),
-        FSEParams(freqs_list[2], TABLE_SIZE_LOG2=12),
-        FSEParams(freqs_list[3], TABLE_SIZE_LOG2=12),
-    ]
-
-    DATA_SIZE = 1000
-    SEED = 0
-
-    for freq, fse_params in zip(freqs_list, params_list):
-        # Generate random data
-        prob_dist = freq.get_prob_dist()
-        data_block = get_random_data_block(prob_dist, DATA_SIZE, seed=SEED)
-        avg_log_prob = get_avg_neg_log_prob(prob_dist, data_block)
-
-        # Create encoder/decoder
-        encoder = FSEEncoder(fse_params)
-        decoder = FSEDecoder(fse_params)
-
-        # Test lossless compression
-        is_lossless, encode_len, _ = try_lossless_compression(
-            data_block, encoder, decoder, add_extra_bits_to_encoder_output=True
-        )
-        assert is_lossless, "FSE encoding/decoding must be lossless"
-
-        # Calculate average code length
-        avg_codelen = encode_len / data_block.size
-        print(
-            f"FSE coding: avg_log_prob={avg_log_prob:.3f}, FSE codelen: {avg_codelen:.3f}"
-        )
-
-
-if __name__ == "__main__":
-    test_fse_basic()
-    test_fse_coding()
-    print("All FSE tests passed!")
