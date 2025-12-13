@@ -41,6 +41,7 @@ def parse_metrics(raw_path: Path, block_size: int) -> Dict[str, Dict[str, Dict[s
         # scl fse variants
         "scl_fse_1_compress": ("scl_fse_1", 0),
         "scl_fse_2_compress": ("scl_fse_2", 0),
+        "scl_fse_3_compress": ("scl_fse_3", 0),
         "scl_fse_4_compress": ("scl_fse_4", 0),
         "scl_fse_5_compress": ("scl_fse_5", 0),
     }
@@ -67,6 +68,7 @@ def parse_metrics(raw_path: Path, block_size: int) -> Dict[str, Dict[str, Dict[s
         "zlibh_decompress": ("zlibh", 0),
         "scl_fse_1_decompress": ("scl_fse_1", 0),
         "scl_fse_2_decompress": ("scl_fse_2", 0),
+        "scl_fse_3_decompress": ("scl_fse_3", 0),
         "scl_fse_4_decompress": ("scl_fse_4", 0),
         "scl_fse_5_decompress": ("scl_fse_5", 0),
     }
@@ -126,6 +128,7 @@ def format_tables(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "zlibh",
         "scl_fse_1",
         "scl_fse_2",
+        "scl_fse_3",
         "scl_fse_4",
         "scl_fse_5",
     ]
@@ -137,6 +140,7 @@ def format_tables(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "zlibh": "zlibh",
         "scl_fse_1": "scl_fse_1",
         "scl_fse_2": "scl_fse_2",
+        "scl_fse_3": "scl_fse_3",
         "scl_fse_4": "scl_fse_4",
         "scl_fse_5": "scl_fse_5",
     }
@@ -167,6 +171,7 @@ def format_plain(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "zlibh",
         "scl_fse_1",
         "scl_fse_2",
+        "scl_fse_3",
         "scl_fse_4",
         "scl_fse_5",
     ]
@@ -178,6 +183,7 @@ def format_plain(metrics: Dict[str, Dict[str, Dict[str, float]]]) -> List[str]:
         "zlibh": "zlibh",
         "scl_fse_1": "scl_fse_1",
         "scl_fse_2": "scl_fse_2",
+        "scl_fse_3": "scl_fse_3",
         "scl_fse_4": "scl_fse_4",
         "scl_fse_5": "scl_fse_5",
     }

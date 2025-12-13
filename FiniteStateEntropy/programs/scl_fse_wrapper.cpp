@@ -16,6 +16,7 @@ extern "C" size_t sclfse_compress_level(const void* src, size_t srcSize, void* d
     opts.level = cfg.level;
     opts.use_lsb = cfg.use_lsb;
     opts.use_lsb_wide = cfg.use_lsb_wide;
+    opts.use_lsb_reader = cfg.use_lsb_reader;
 
     const auto* in = static_cast<const uint8_t*>(src);
     std::vector<uint8_t> input(in, in + srcSize);

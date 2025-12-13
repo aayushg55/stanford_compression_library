@@ -184,7 +184,7 @@ def get_codec_factories(codecs: Optional[List[str]] = None):
         get_size_func is None for symbol-level codecs (uses data_block.size).
     """
     if codecs is None:
-        codecs = ["fse", "zlib", "zstd", "pickle"]
+        codecs = ["fse", "rans", "tans", "huffman", "lz77", "zlib", "zstd", "fse_cpp"]
 
     codecs_lower = [c.lower() for c in codecs]
 
@@ -843,7 +843,7 @@ Examples:
     else:
         if args.synthetic_large:
             print("SYNTHETIC DATA mode: LARGE benchmark (100K symbols)")
-            data_size = 100_000
+            data_size = 10_000
         else:
             print("SYNTHETIC DATA mode: Standard benchmark (10K symbols)")
             data_size = 10_000

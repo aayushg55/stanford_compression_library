@@ -1149,6 +1149,21 @@ int runBench(const void* buffer, size_t blockSize, U32 algNb, U32 nbBenchs)
         func = local_SCLFSE_decompress;
         break;
 
+    case 98:
+        g_scl_level = 3;
+        funcName = "scl_fse_3_compress";
+        func = local_SCLFSE_compress;
+        break;
+
+    case 99:
+        g_scl_level = 3;
+        g_cSize = sclfse_compress_level(oBuffer, benchedSize, cBuffer, cBuffSize, (int)g_scl_level);
+        memcpy(oBuffer, cBuffer, g_cSize);
+        g_oSize = benchedSize;
+        funcName = "scl_fse_3_decompress";
+        func = local_SCLFSE_decompress;
+        break;
+
     case 96:
         g_scl_level = 5;
         funcName = "scl_fse_5_compress";
